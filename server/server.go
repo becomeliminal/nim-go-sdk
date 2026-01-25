@@ -60,6 +60,11 @@ type Config struct {
 	// AnthropicOptions are additional options for the Anthropic client.
 	// This can be used to customize the HTTP client for testing.
 	AnthropicOptions []option.RequestOption
+
+	// DisableStreaming disables streaming mode for the Anthropic API.
+	// When true, uses the non-streaming Messages.New() API instead of NewStreaming().
+	// Useful for testing with mock servers that don't support SSE.
+	DisableStreaming bool
 }
 
 // Server is a WebSocket server for the Nim agent.
@@ -331,11 +336,15 @@ func (s *Server) handleMessage(ctx context.Context, conn *websocket.Conn, sess *
 		SystemPrompt: s.config.SystemPrompt,
 		Model:        s.config.Model,
 		MaxTokens:    s.config.MaxTokens,
-		StreamCallback: func(chunk string, done bool) {
+	}
+
+	// Only enable streaming if not disabled (streaming requires SSE-compatible server)
+	if !s.config.DisableStreaming {
+		input.StreamCallback = func(chunk string, done bool) {
 			if !done && chunk != "" {
 				s.send(conn, ServerMessage{Type: "text_chunk", Content: chunk})
 			}
-		},
+		}
 	}
 
 	// Run agent
