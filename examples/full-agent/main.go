@@ -41,14 +41,16 @@ func main() {
 	}
 
 	// Create server with authentication
-	srv := server.New(server.Config{
+	srv, err := server.New(server.Config{
 		AnthropicKey: anthropicKey,
-		Executor:     liminalExecutor,
 		SystemPrompt: nimSystemPrompt,
 		Model:        "claude-sonnet-4-20250514",
 		MaxTokens:    4096,
 		AuthFunc:     authenticateRequest,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Add Liminal tools if executor is configured
 	if liminalExecutor != nil {

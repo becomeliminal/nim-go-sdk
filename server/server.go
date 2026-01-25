@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/gorilla/websocket"
 
 	"github.com/becomeliminal/nim-go-sdk/core"
@@ -22,6 +23,11 @@ type Config struct {
 	// AnthropicKey is the Anthropic API key.
 	AnthropicKey string
 
+	// BaseURL is the Anthropic API base URL.
+	// If empty, uses the default Anthropic API URL.
+	// Useful for testing with mock servers.
+	BaseURL string
+
 	// SystemPrompt is the system prompt for the agent.
 	SystemPrompt string
 
@@ -31,17 +37,29 @@ type Config struct {
 	// MaxTokens is the maximum response tokens.
 	MaxTokens int64
 
-	// Executor is an optional ToolExecutor for Liminal tools.
-	// If not set, only custom tools will be available.
-	Executor core.ToolExecutor
-
 	// AuthFunc validates requests and returns a user ID.
 	// If nil, a default user ID is used (not recommended for production).
 	AuthFunc func(r *http.Request) (userID string, err error)
 
 	// Conversations persists conversations.
-	// If nil, conversations are stored in memory only.
+	// If nil, an in-memory store is used.
 	Conversations store.Conversations
+
+	// Confirmations stores pending actions awaiting user approval.
+	// If nil, an in-memory store is used.
+	Confirmations store.Confirmations
+
+	// Guardrails provides rate limiting and circuit breaker functionality.
+	// If nil, no guardrails are applied.
+	Guardrails engine.Guardrails
+
+	// AuditLogger logs agent actions for compliance.
+	// If nil, no audit logging is performed.
+	AuditLogger engine.AuditLogger
+
+	// AnthropicOptions are additional options for the Anthropic client.
+	// This can be used to customize the HTTP client for testing.
+	AnthropicOptions []option.RequestOption
 }
 
 // Server is a WebSocket server for the Nim agent.
@@ -65,15 +83,39 @@ type session struct {
 }
 
 // New creates a new server with the given configuration.
-func New(cfg Config) *Server {
+// Returns an error if AnthropicKey is not provided.
+func New(cfg Config) (*Server, error) {
+	if cfg.AnthropicKey == "" {
+		return nil, fmt.Errorf("AnthropicKey is required")
+	}
+
+	// Build Anthropic client options
+	opts := make([]option.RequestOption, 0, len(cfg.AnthropicOptions)+2)
+	opts = append(opts, cfg.AnthropicOptions...)
+	opts = append(opts, option.WithAPIKey(cfg.AnthropicKey))
+
+	// Add base URL if provided
+	if cfg.BaseURL != "" {
+		opts = append(opts, option.WithBaseURL(cfg.BaseURL))
+	}
+
 	// Create Anthropic client
-	client := anthropic.NewClient()
+	client := anthropic.NewClient(opts...)
 
 	// Create registry
 	registry := engine.NewToolRegistry()
 
+	// Build engine options
+	var engineOpts []engine.Option
+	if cfg.Guardrails != nil {
+		engineOpts = append(engineOpts, engine.WithGuardrails(cfg.Guardrails))
+	}
+	if cfg.AuditLogger != nil {
+		engineOpts = append(engineOpts, engine.WithAudit(cfg.AuditLogger))
+	}
+
 	// Create engine
-	eng := engine.NewEngine(&client, registry)
+	eng := engine.NewEngine(&client, registry, engineOpts...)
 
 	// Default to in-memory stores if not provided
 	conversations := cfg.Conversations
@@ -81,18 +123,23 @@ func New(cfg Config) *Server {
 		conversations = store.NewMemoryConversations()
 	}
 
+	confirmations := cfg.Confirmations
+	if confirmations == nil {
+		confirmations = store.NewMemoryConfirmations()
+	}
+
 	return &Server{
 		config:        cfg,
 		engine:        eng,
 		registry:      registry,
 		conversations: conversations,
-		confirmations: store.NewMemoryConfirmations(),
+		confirmations: confirmations,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins in development
 			},
 		},
-	}
+	}, nil
 }
 
 // AddTool registers a custom tool with the server.
@@ -103,6 +150,11 @@ func (s *Server) AddTool(tool core.Tool) {
 // AddTools registers multiple tools with the server.
 func (s *Server) AddTools(tools ...core.Tool) {
 	s.registry.RegisterAll(tools...)
+}
+
+// ToolCount returns the number of registered tools.
+func (s *Server) ToolCount() int {
+	return s.registry.Count()
 }
 
 // Handler returns an HTTP handler for WebSocket connections.

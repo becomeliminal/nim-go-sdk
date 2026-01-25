@@ -19,7 +19,7 @@ func main() {
 		log.Fatal("ANTHROPIC_API_KEY environment variable is required")
 	}
 
-	srv := server.New(server.Config{
+	srv, err := server.New(server.Config{
 		AnthropicKey: anthropicKey,
 		SystemPrompt: `You are a helpful assistant for a task management app.
 You can help users manage their tasks and schedule.
@@ -32,6 +32,9 @@ Available tools:
 
 Be helpful and proactive about task management.`,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// In-memory task storage (use a real database in production)
 	taskStore := &TaskStore{

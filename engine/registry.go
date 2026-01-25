@@ -106,3 +106,10 @@ func FilterByNames(names ...string) func(core.Tool) bool {
 		return nameSet[t.Name()]
 	}
 }
+
+// Count returns the number of registered tools.
+func (r *ToolRegistry) Count() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.tools)
+}

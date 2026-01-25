@@ -19,12 +19,15 @@ func main() {
 	}
 
 	// Create server
-	srv := server.New(server.Config{
+	srv, err := server.New(server.Config{
 		AnthropicKey: anthropicKey,
 		SystemPrompt: `You are a helpful assistant with access to a weather tool.
 When users ask about weather, use the get_weather tool.
 Be conversational and helpful.`,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// Add a custom tool
 	weatherTool := tools.New("get_weather").

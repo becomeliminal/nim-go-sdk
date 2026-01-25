@@ -16,14 +16,19 @@ A Go SDK for building AI-powered financial assistants using Claude.
 package main
 
 import (
+    "log"
+
     "github.com/becomeliminal/nim-go-sdk/server"
     "github.com/becomeliminal/nim-go-sdk/tools"
 )
 
 func main() {
-    srv := server.New(server.Config{
+    srv, err := server.New(server.Config{
         AnthropicKey: "sk-ant-...",
     })
+    if err != nil {
+        log.Fatal(err)
+    }
 
     // Add a custom tool
     srv.AddTool(tools.New("get_weather").
