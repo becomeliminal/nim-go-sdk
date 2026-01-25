@@ -11,10 +11,9 @@ func LiminalToolDefinitions() []core.ToolDefinition {
 		// Read operations
 		{
 			ToolName:        "get_balance",
-			ToolDescription: "Get the user's wallet balance across all tokens and chains.",
+			ToolDescription: "Get the user's wallet balance.",
 			InputSchema: ObjectSchema(map[string]interface{}{
-				"chain": StringProperty("Optional: filter by blockchain (e.g., 'arbitrum', 'base')"),
-				"token": StringProperty("Optional: filter by token (e.g., 'usdc', 'eurc')"),
+				"currency": StringProperty("Optional: filter by currency (e.g., 'USD', 'EUR', 'LIL')"),
 			}),
 		},
 		{
@@ -55,35 +54,33 @@ func LiminalToolDefinitions() []core.ToolDefinition {
 			ToolName:                 "send_money",
 			ToolDescription:          "Send money to another user. Requires confirmation.",
 			RequiresUserConfirmation: true,
-			SummaryTemplate:          "Send {{.amount}} {{.token}} to @{{.recipient}}",
+			SummaryTemplate:          "Send {{.amount}} {{.currency}} to {{.recipient}}",
 			InputSchema: ObjectSchema(map[string]interface{}{
 				"recipient": StringProperty("Recipient's display tag (e.g., @alice) or user ID"),
 				"amount":    StringProperty("Amount to send (e.g., '50.00')"),
-				"token":     StringProperty("Token to send (default: usdc)"),
+				"currency":  StringProperty("Currency to send (e.g., 'USD', 'EUR', 'LIL')"),
 				"note":      StringProperty("Optional payment note"),
-			}, "recipient", "amount"),
+			}, "recipient", "amount", "currency"),
 		},
 		{
 			ToolName:                 "deposit_savings",
-			ToolDescription:          "Deposit funds into a savings vault. Requires confirmation.",
+			ToolDescription:          "Deposit funds into savings. Requires confirmation.",
 			RequiresUserConfirmation: true,
-			SummaryTemplate:          "Deposit {{.amount}} {{.token}} into {{.vault}}",
+			SummaryTemplate:          "Deposit {{.amount}} {{.currency}} into savings",
 			InputSchema: ObjectSchema(map[string]interface{}{
-				"amount": StringProperty("Amount to deposit"),
-				"token":  StringProperty("Token to deposit (default: usdc)"),
-				"vault":  StringProperty("Vault to deposit into (default: morpho)"),
-			}, "amount"),
+				"amount":   StringProperty("Amount to deposit"),
+				"currency": StringProperty("Currency to deposit (e.g., 'USD', 'EUR', 'LIL')"),
+			}, "amount", "currency"),
 		},
 		{
 			ToolName:                 "withdraw_savings",
-			ToolDescription:          "Withdraw funds from a savings vault. Requires confirmation.",
+			ToolDescription:          "Withdraw funds from savings. Requires confirmation.",
 			RequiresUserConfirmation: true,
-			SummaryTemplate:          "Withdraw {{.amount}} {{.token}} from {{.vault}}",
+			SummaryTemplate:          "Withdraw {{.amount}} {{.currency}} from savings",
 			InputSchema: ObjectSchema(map[string]interface{}{
-				"amount": StringProperty("Amount to withdraw"),
-				"token":  StringProperty("Token to withdraw (default: usdc)"),
-				"vault":  StringProperty("Vault to withdraw from"),
-			}, "amount"),
+				"amount":   StringProperty("Amount to withdraw"),
+				"currency": StringProperty("Currency to withdraw (e.g., 'USD', 'EUR', 'LIL')"),
+			}, "amount", "currency"),
 		},
 	}
 }

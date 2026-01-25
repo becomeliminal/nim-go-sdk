@@ -27,20 +27,20 @@ type GRPCExecutor struct {
 
 // WalletService defines the interface for wallet operations.
 type WalletService interface {
-	GetBalance(ctx context.Context, userID string, chain, token *string) (json.RawMessage, error)
+	GetBalance(ctx context.Context, userID string, currency *string) (json.RawMessage, error)
 }
 
 // PaymentService defines the interface for payment operations.
 type PaymentService interface {
-	Send(ctx context.Context, userID, recipient, amount, token string, note *string) (json.RawMessage, error)
+	Send(ctx context.Context, userID, recipient, amount, currency string, note *string) (json.RawMessage, error)
 }
 
 // SavingsService defines the interface for savings operations.
 type SavingsService interface {
 	GetBalance(ctx context.Context, userID string, vault *string) (json.RawMessage, error)
 	GetVaultRates(ctx context.Context) (json.RawMessage, error)
-	Deposit(ctx context.Context, userID, amount, token, vault string) (json.RawMessage, error)
-	Withdraw(ctx context.Context, userID, amount, token, vault string) (json.RawMessage, error)
+	Deposit(ctx context.Context, userID, amount, currency string) (json.RawMessage, error)
+	Withdraw(ctx context.Context, userID, amount, currency string) (json.RawMessage, error)
 }
 
 // UserService defines the interface for user operations.
@@ -228,12 +228,11 @@ func (e *GRPCExecutor) executeGetBalance(ctx context.Context, req *core.ExecuteR
 	}
 
 	var input struct {
-		Chain *string `json:"chain"`
-		Token *string `json:"token"`
+		Currency *string `json:"currency"`
 	}
 	json.Unmarshal(req.Input, &input)
 
-	return e.wallets.GetBalance(ctx, req.UserID, input.Chain, input.Token)
+	return e.wallets.GetBalance(ctx, req.UserID, input.Currency)
 }
 
 func (e *GRPCExecutor) executeGetSavingsBalance(ctx context.Context, req *core.ExecuteRequest) (json.RawMessage, error) {
@@ -309,19 +308,14 @@ func (e *GRPCExecutor) executeSendMoney(ctx context.Context, userID string, inpu
 	var params struct {
 		Recipient string  `json:"recipient"`
 		Amount    string  `json:"amount"`
-		Token     string  `json:"token"`
+		Currency  string  `json:"currency"`
 		Note      *string `json:"note"`
 	}
 	if err := json.Unmarshal(input, &params); err != nil {
 		return nil, err
 	}
 
-	token := params.Token
-	if token == "" {
-		token = "usdc"
-	}
-
-	return e.payments.Send(ctx, userID, params.Recipient, params.Amount, token, params.Note)
+	return e.payments.Send(ctx, userID, params.Recipient, params.Amount, params.Currency, params.Note)
 }
 
 func (e *GRPCExecutor) executeDepositSavings(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error) {
@@ -330,24 +324,14 @@ func (e *GRPCExecutor) executeDepositSavings(ctx context.Context, userID string,
 	}
 
 	var params struct {
-		Amount string `json:"amount"`
-		Token  string `json:"token"`
-		Vault  string `json:"vault"`
+		Amount   string `json:"amount"`
+		Currency string `json:"currency"`
 	}
 	if err := json.Unmarshal(input, &params); err != nil {
 		return nil, err
 	}
 
-	token := params.Token
-	if token == "" {
-		token = "usdc"
-	}
-	vault := params.Vault
-	if vault == "" {
-		vault = "morpho"
-	}
-
-	return e.savings.Deposit(ctx, userID, params.Amount, token, vault)
+	return e.savings.Deposit(ctx, userID, params.Amount, params.Currency)
 }
 
 func (e *GRPCExecutor) executeWithdrawSavings(ctx context.Context, userID string, input json.RawMessage) (json.RawMessage, error) {
@@ -356,20 +340,14 @@ func (e *GRPCExecutor) executeWithdrawSavings(ctx context.Context, userID string
 	}
 
 	var params struct {
-		Amount string `json:"amount"`
-		Token  string `json:"token"`
-		Vault  string `json:"vault"`
+		Amount   string `json:"amount"`
+		Currency string `json:"currency"`
 	}
 	if err := json.Unmarshal(input, &params); err != nil {
 		return nil, err
 	}
 
-	token := params.Token
-	if token == "" {
-		token = "usdc"
-	}
-
-	return e.savings.Withdraw(ctx, userID, params.Amount, token, params.Vault)
+	return e.savings.Withdraw(ctx, userID, params.Amount, params.Currency)
 }
 
 // Summary generation helpers
@@ -378,50 +356,29 @@ func (e *GRPCExecutor) generateSendMoneySummary(input json.RawMessage) string {
 	var params struct {
 		Recipient string `json:"recipient"`
 		Amount    string `json:"amount"`
-		Token     string `json:"token"`
+		Currency  string `json:"currency"`
 	}
 	json.Unmarshal(input, &params)
 
-	token := params.Token
-	if token == "" {
-		token = "USDC"
-	}
-
-	return fmt.Sprintf("Send %s %s to %s", params.Amount, token, params.Recipient)
+	return fmt.Sprintf("Send %s %s to %s", params.Amount, params.Currency, params.Recipient)
 }
 
 func (e *GRPCExecutor) generateDepositSummary(input json.RawMessage) string {
 	var params struct {
-		Amount string `json:"amount"`
-		Token  string `json:"token"`
-		Vault  string `json:"vault"`
+		Amount   string `json:"amount"`
+		Currency string `json:"currency"`
 	}
 	json.Unmarshal(input, &params)
 
-	token := params.Token
-	if token == "" {
-		token = "USDC"
-	}
-	vault := params.Vault
-	if vault == "" {
-		vault = "Morpho"
-	}
-
-	return fmt.Sprintf("Deposit %s %s into %s savings", params.Amount, token, vault)
+	return fmt.Sprintf("Deposit %s %s into savings", params.Amount, params.Currency)
 }
 
 func (e *GRPCExecutor) generateWithdrawSummary(input json.RawMessage) string {
 	var params struct {
-		Amount string `json:"amount"`
-		Token  string `json:"token"`
-		Vault  string `json:"vault"`
+		Amount   string `json:"amount"`
+		Currency string `json:"currency"`
 	}
 	json.Unmarshal(input, &params)
 
-	token := params.Token
-	if token == "" {
-		token = "USDC"
-	}
-
-	return fmt.Sprintf("Withdraw %s %s from %s savings", params.Amount, token, params.Vault)
+	return fmt.Sprintf("Withdraw %s %s from savings", params.Amount, params.Currency)
 }
