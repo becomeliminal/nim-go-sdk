@@ -58,24 +58,28 @@ func NewHTTPExecutor(cfg HTTPExecutorConfig) *HTTPExecutor {
 
 // Execute runs a read-only tool via HTTP.
 func (e *HTTPExecutor) Execute(ctx context.Context, req *core.ExecuteRequest) (*core.ExecuteResponse, error) {
+	fmt.Printf("[HTTP] Execute called for tool: %s, user: %s\n", req.Tool, req.UserID)
 	endpoint := e.endpointForTool(req.Tool)
 	return e.doRequest(ctx, "GET", endpoint, req, req.Tool)
 }
 
 // ExecuteWrite runs a write tool that may require confirmation.
 func (e *HTTPExecutor) ExecuteWrite(ctx context.Context, req *core.ExecuteRequest) (*core.ExecuteResponse, error) {
+	fmt.Printf("[HTTP] ExecuteWrite called for tool: %s, user: %s\n", req.Tool, req.UserID)
 	endpoint := e.endpointForTool(req.Tool)
 	return e.doRequest(ctx, "POST", endpoint, req, req.Tool)
 }
 
 // Confirm executes a previously confirmed write operation.
 func (e *HTTPExecutor) Confirm(ctx context.Context, userID, confirmationID string) (*core.ExecuteResponse, error) {
+	fmt.Printf("[HTTP] Confirm called for confirmationID: %s, user: %s\n", confirmationID, userID)
 	endpoint := fmt.Sprintf("/nim/v1/agent/confirmations/%s/confirm", confirmationID)
 	return e.doRequest(ctx, "POST", endpoint, nil, "")
 }
 
 // Cancel cancels a pending confirmation.
 func (e *HTTPExecutor) Cancel(ctx context.Context, userID, confirmationID string) error {
+	fmt.Printf("[HTTP] Cancel called for confirmationID: %s, user: %s\n", confirmationID, userID)
 	endpoint := fmt.Sprintf("/nim/v1/agent/confirmations/%s/cancel", confirmationID)
 	_, err := e.doRequest(ctx, "POST", endpoint, nil, "")
 	return err
@@ -107,6 +111,7 @@ func (e *HTTPExecutor) endpointForTool(tool string) string {
 // doRequest performs an HTTP request to the agent_gateway.
 func (e *HTTPExecutor) doRequest(ctx context.Context, method, endpoint string, body interface{}, toolName string) (*core.ExecuteResponse, error) {
 	urlStr := e.baseURL + endpoint
+	fmt.Printf("[HTTP] %s %s\n", method, urlStr)
 
 	var bodyReader io.Reader
 
@@ -138,17 +143,21 @@ func (e *HTTPExecutor) doRequest(ctx context.Context, method, endpoint string, b
 					return nil, fmt.Errorf("failed to unmarshal input params: %w", err)
 				}
 				bodyToSend = params
+				fmt.Printf("[HTTP] Extracted params from ExecuteRequest: %+v\n", params)
 			} else {
 				bodyToSend = map[string]interface{}{}
+				fmt.Printf("[HTTP] Empty input, sending empty params\n")
 			}
 		} else {
 			bodyToSend = body // Non-ExecuteRequest bodies pass through
+			fmt.Printf("[HTTP] Non-ExecuteRequest body: %+v\n", body)
 		}
 
 		bodyBytes, err := json.Marshal(bodyToSend)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal request: %w", err)
 		}
+		fmt.Printf("[HTTP] Request body: %s\n", string(bodyBytes))
 		bodyReader = bytes.NewReader(bodyBytes)
 	}
 
@@ -164,21 +173,30 @@ func (e *HTTPExecutor) doRequest(ctx context.Context, method, endpoint string, b
 	// Prefer JWT over API key
 	if e.jwtToken != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.jwtToken))
+		fmt.Printf("[HTTP] Using JWT auth (token: %s...)\n", e.jwtToken[:20])
 	} else if e.apiKey != "" {
 		// Fallback to API key for backward compatibility
 		req.Header.Set("X-API-Key", e.apiKey)
+		fmt.Printf("[HTTP] Using API key auth\n")
+	} else {
+		fmt.Printf("[HTTP] WARNING: No authentication configured!\n")
 	}
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
+		fmt.Printf("[HTTP] Request failed: %v\n", err)
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		fmt.Printf("[HTTP] Failed to read response: %v\n", err)
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
+
+	fmt.Printf("[HTTP] Response status: %d\n", resp.StatusCode)
+	fmt.Printf("[HTTP] Response body: %s\n", string(respBody))
 
 	if resp.StatusCode >= 400 {
 		return &core.ExecuteResponse{

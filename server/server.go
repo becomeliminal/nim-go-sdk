@@ -454,7 +454,10 @@ func (s *Server) handleConfirm(ctx context.Context, conn *websocket.Conn, sess *
 	}
 
 	// Execute the confirmed tool
-	result, err := s.engine.ExecuteTool(ctx, userID, action.Tool, action.Input, action.ID)
+	// Pass empty confirmationID so ExecutorTool calls ExecuteWrite() directly
+	// instead of executor.Confirm(). The confirmation was already retrieved from
+	// local storage above, so we just need to execute the tool with the original params.
+	result, err := s.engine.ExecuteTool(ctx, userID, action.Tool, action.Input, "")
 
 	var resultContent string
 	var isError bool
