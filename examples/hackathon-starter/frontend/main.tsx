@@ -6,7 +6,7 @@ import './styles.css'
 
 function App() {
   const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws'
-  const apiUrl = import.meta.env.VITE_API_URL || 'https://api.liminal.cash'
+  const apiUrl = import.meta.env.VITE_API_URL || 'https://dev-api.liminal.cash'
 
   return (
     <>
