@@ -15,6 +15,14 @@ type WalletBalance struct {
 	USDValue string `json:"usdValue"`
 }
 
+type ExecuteContractCallResponse struct {
+	Success       bool   `json:"success"`
+	Error         string `json:"error,omitempty"`
+	TransactionID string `json:"transactionId,omitempty"`
+	TxHash        string `json:"txHash,omitempty"`
+	Status        string `json:"status,omitempty"`
+}
+
 // Savings types
 type GetSavingsBalanceResponse struct {
 	Positions []SavingsPosition `json:"positions"`
@@ -162,6 +170,8 @@ func toolResponseType(toolName string) interface{} {
 		return &GetProfileResponse{}
 	case "search_users":
 		return &SearchUsersResponse{}
+	case "execute_contract_call":
+		return &ExecuteContractCallResponse{}
 	default:
 		// For unknown tools, use generic map
 		return &map[string]interface{}{}

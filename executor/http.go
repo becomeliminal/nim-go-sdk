@@ -85,15 +85,16 @@ func (e *HTTPExecutor) Cancel(ctx context.Context, userID, confirmationID string
 func (e *HTTPExecutor) endpointForTool(tool string) string {
 	// Map tool names to nim_gateway endpoints
 	endpoints := map[string]string{
-		"get_balance":         "/nim/v1/agent/wallet/balance",
-		"get_savings_balance": "/nim/v1/agent/savings/balance",
-		"get_vault_rates":     "/nim/v1/agent/savings/vaults",
-		"get_transactions":    "/nim/v1/agent/transactions",
-		"get_profile":         "/nim/v1/agent/profile",
-		"search_users":        "/nim/v1/agent/users/search",
-		"send_money":          "/nim/v1/agent/payments/send",
-		"deposit_savings":     "/nim/v1/agent/savings/deposit",
-		"withdraw_savings":    "/nim/v1/agent/savings/withdraw",
+		"get_balance":            "/nim/v1/agent/wallet/balance",
+		"get_savings_balance":    "/nim/v1/agent/savings/balance",
+		"get_vault_rates":        "/nim/v1/agent/savings/vaults",
+		"get_transactions":       "/nim/v1/agent/transactions",
+		"get_profile":            "/nim/v1/agent/profile",
+		"search_users":           "/nim/v1/agent/users/search",
+		"send_money":             "/nim/v1/agent/payments/send",
+		"deposit_savings":        "/nim/v1/agent/savings/deposit",
+		"withdraw_savings":       "/nim/v1/agent/savings/withdraw",
+		"execute_contract_call":  "/nim/v1/agent/wallet/execute",
 	}
 
 	if endpoint, ok := endpoints[tool]; ok {

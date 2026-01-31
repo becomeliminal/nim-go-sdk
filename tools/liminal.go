@@ -82,6 +82,19 @@ func LiminalToolDefinitions() []core.ToolDefinition {
 				"currency": StringProperty("Currency to withdraw (e.g., 'USD', 'EUR', 'LIL')"),
 			}, "amount", "currency"),
 		},
+		{
+			ToolName:                 "execute_contract_call",
+			ToolDescription:          "Execute an arbitrary smart contract call on any blockchain. Requires confirmation. You must provide pre-encoded calldata as hex.",
+			RequiresUserConfirmation: true,
+			SummaryTemplate:          "Execute contract call on chain {{.chain_id}} to {{.to}}",
+			InputSchema: ObjectSchema(map[string]interface{}{
+				"chain_id": IntegerProperty("Chain ID (42161=Arbitrum, 8453=Base, 1=Ethereum)"),
+				"to":       StringProperty("Contract address (0x...)"),
+				"data":     StringProperty("Hex-encoded calldata (0x...). Must be pre-encoded."),
+				"value":    StringProperty("Optional: ETH value to send in wei (default: 0)"),
+				"gas_tier": StringEnumProperty("Optional: gas tier", "slow", "standard", "fast"),
+			}, "chain_id", "to", "data"),
+		},
 	}
 }
 
