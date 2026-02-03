@@ -3,6 +3,7 @@ package core
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -80,6 +81,37 @@ type ToolResultContent struct {
 
 	// IsError indicates if the tool execution failed.
 	IsError bool `json:"is_error,omitempty"`
+}
+
+// Trace represents a single ReAct reasoning-action-observation cycle
+type Trace struct {
+	ID          string                 `json:"id"`            // Unique trace identifier
+	SessionID   string                 `json:"session_id"`    // Links to session
+	TurnNumber  int                    `json:"turn_number"`   // Sequence within session
+	Thought     string                 `json:"thought"`       // Agent's reasoning
+	Action      string                 `json:"action"`        // Tool name
+	ActionInput json.RawMessage        `json:"action_input"`  // Tool parameters
+	Observation string                 `json:"observation"`   // Formatted result
+	Success     bool                   `json:"success"`       // Execution outcome
+	Timestamp   int64                  `json:"timestamp"`     // Unix timestamp
+	Metadata    map[string]string      `json:"metadata,omitempty"` // Error context, prevention
+}
+
+// String formats the trace for logging and debugging
+func (t *Trace) String() string {
+	status := "✓"
+	if !t.Success {
+		status = "✗"
+	}
+	return fmt.Sprintf("[%s] %s | Thought: %q | Observation: %q",
+		status, t.Action, truncate(t.Thought, 60), truncate(t.Observation, 100))
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
 }
 
 // NewUserMessage creates a user text message.
@@ -361,6 +393,9 @@ type PendingAction struct {
 
 	// Input is the tool parameters as JSON.
 	Input json.RawMessage `json:"input"`
+
+	// Thought is the agent's reasoning for this action (stored for ReAct trace).
+	Thought string `json:"thought,omitempty"`
 
 	// Summary is a human-readable description of the action.
 	Summary string `json:"summary"`

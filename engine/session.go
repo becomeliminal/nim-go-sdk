@@ -17,6 +17,7 @@ type Session struct {
 	messages       []anthropic.MessageParam
 	TurnCount      int
 	CreatedAt      time.Time
+	Traces         []*core.Trace // Store traces for this session
 }
 
 // NewSession creates a new session.
@@ -71,6 +72,11 @@ func (s *Session) Messages() []anthropic.MessageParam {
 func (s *Session) IncrementTurnCount() int {
 	s.TurnCount++
 	return s.TurnCount
+}
+
+// AddTrace appends a trace to the session
+func (s *Session) AddTrace(trace *core.Trace) {
+	s.Traces = append(s.Traces, trace)
 }
 
 // RestoreHistory restores messages from core.Message history.

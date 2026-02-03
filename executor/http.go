@@ -121,14 +121,24 @@ func (e *HTTPExecutor) doRequest(ctx context.Context, method, endpoint string, b
 			// Parse Input JSON and add as query parameters
 			var params map[string]interface{}
 			if err := json.Unmarshal(execReq.Input, &params); err == nil {
+				// Filter out ReAct fields that shouldn't be sent to external APIs
+				delete(params, "thought")
+
+				fmt.Printf("[HTTP] GET request params: %+v\n", params)
+
 				query := make([]string, 0, len(params))
 				for k, v := range params {
 					query = append(query, fmt.Sprintf("%s=%v", k, v))
 				}
 				if len(query) > 0 {
 					urlStr += "?" + strings.Join(query, "&")
+					fmt.Printf("[HTTP] Query string: %s\n", strings.Join(query, "&"))
+				} else {
+					fmt.Printf("[HTTP] No query parameters\n")
 				}
 			}
+		} else {
+			fmt.Printf("[HTTP] GET request with no input\n")
 		}
 		bodyReader = nil
 	} else if body != nil {
@@ -142,6 +152,9 @@ func (e *HTTPExecutor) doRequest(ctx context.Context, method, endpoint string, b
 				if err := json.Unmarshal(execReq.Input, &params); err != nil {
 					return nil, fmt.Errorf("failed to unmarshal input params: %w", err)
 				}
+				// Filter out ReAct fields that shouldn't be sent to external APIs
+				delete(params, "thought")
+
 				bodyToSend = params
 				fmt.Printf("[HTTP] Extracted params from ExecuteRequest: %+v\n", params)
 			} else {

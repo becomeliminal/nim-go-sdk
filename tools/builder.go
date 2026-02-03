@@ -39,8 +39,13 @@ func (b *Builder) Schema(schema map[string]interface{}) *Builder {
 }
 
 // RequiresConfirmation marks this tool as requiring user confirmation.
+// Automatically makes thought parameter required for safety.
 func (b *Builder) RequiresConfirmation() *Builder {
 	b.requiresConfirmation = true
+	// Auto-enable required thought for write operations
+	if b.schema != nil {
+		b.schema = WithThought(b.schema, true)
+	}
 	return b
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	"github.com/anthropics/anthropic-sdk-go"
@@ -281,6 +283,22 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 				toolName := block.Name
 				toolInput := block.Input
 
+				// PHASE 1: THINK - Extract thought from tool input (type-safe)
+				var baseInput struct {
+					Thought string `json:"thought,omitempty"`
+				}
+				if err := json.Unmarshal(toolInput, &baseInput); err != nil {
+					// JSON parsing error - shouldn't happen with Claude's output
+					toolResults = append(toolResults, anthropic.NewToolResultBlock(
+						block.ID,
+						fmt.Sprintf("invalid tool input JSON: %s", err.Error()),
+						true,
+					))
+					continue
+				}
+
+				thought := strings.TrimSpace(baseInput.Thought)
+
 				tool, ok := e.registry.Get(toolName)
 				if !ok {
 					toolResults = append(toolResults, anthropic.NewToolResultBlock(
@@ -291,9 +309,43 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 					continue
 				}
 
+				// PHASE 2: VALIDATE - Enforce thought presence for write operations
+				if tool.RequiresConfirmation() && thought == "" {
+					toolResults = append(toolResults, anthropic.NewToolResultBlock(
+						block.ID,
+						`Error: Missing or empty "thought" field. Write operations require explicit reasoning.
+Please explain:
+1. What you've verified (e.g., "Balance is $500, sufficient for $100 transfer")
+2. Why you're taking this action (e.g., "User requested transfer to Alice")
+3. What you expect to happen (e.g., "This will complete the payment")`,
+						true,
+					))
+					continue
+				}
+
+				// Create trace object for this action
+				inputBytes, _ := json.Marshal(toolInput)
+				trace := &core.Trace{
+					ID:          uuid.New().String(),
+					SessionID:   session.ID,
+					TurnNumber:  session.TurnCount,
+					Thought:     thought,
+					Action:      toolName,
+					ActionInput: inputBytes,
+					Timestamp:   time.Now().Unix(),
+					Metadata:    make(map[string]string),
+				}
+
 				// Check if write operation requiring confirmation
 				if tool.RequiresConfirmation() {
 					if !canConfirm {
+						// Store trace for blocked confirmation
+						trace.Success = false
+						trace.Observation = "Operation blocked: confirmation not allowed in this context"
+						trace.Metadata["error"] = "confirmation_disabled"
+						session.AddTrace(trace)
+						log.Printf("[REACT TRACE] %s", trace.String())
+
 						toolResults = append(toolResults, anthropic.NewToolResultBlock(
 							block.ID,
 							"error: this operation requires user confirmation",
@@ -302,7 +354,7 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 						continue
 					}
 
-					inputBytes, _ := json.Marshal(toolInput)
+					// Generate pending confirmation
 					confirmationNeeded = &core.PendingAction{
 						ID:             uuid.New().String(),
 						IdempotencyKey: GenerateIdempotencyKey(session.UserID, toolName, inputBytes),
@@ -310,18 +362,25 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 						UserID:         session.UserID,
 						Tool:           toolName,
 						Input:          inputBytes,
+						Thought:        thought, // Store thought for ReAct trace on confirmation
 						Summary:        tool.GetSummary(inputBytes),
 						BlockID:        block.ID,
 						CreatedAt:      time.Now().Unix(),
 						ExpiresAt:      time.Now().Add(10 * time.Minute).Unix(),
 					}
+
+					// Store trace with pending status
+					trace.Success = false
+					trace.Observation = "Awaiting user confirmation"
+					trace.Metadata["confirmation_id"] = confirmationNeeded.ID
+					trace.Metadata["status"] = "pending_confirmation"
+					session.AddTrace(trace)
+					log.Printf("[REACT TRACE] %s", trace.String())
 					break
 				}
 
-				// Execute read-only tool
+				// PHASE 3: ACT - Execute read-only tool
 				startTime := time.Now()
-				inputBytes, _ := json.Marshal(toolInput)
-
 				result, err := tool.Execute(ctx, &core.ToolParams{
 					UserID:    session.UserID,
 					Input:     inputBytes,
@@ -334,6 +393,32 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 					Input:      toolInput,
 					DurationMs: durationMs,
 				}
+
+				// PHASE 4: OBSERVE - Format observation
+				trace.Success = (err == nil && result != nil && result.Success)
+				trace.Observation = formatObservation(tool, result, err)
+
+				// Store failure context if applicable
+				if !trace.Success {
+					if err != nil {
+						trace.Metadata["error"] = err.Error()
+						execution.Error = err.Error()
+					} else if result != nil && !result.Success {
+						trace.Metadata["error"] = result.Error
+						execution.Error = result.Error
+					}
+
+					// Categorize error for reflexion
+					errorType := categorizeError(trace.Metadata["error"])
+					trace.Metadata["error_type"] = errorType
+					trace.Metadata["prevention"] = generatePrevention(toolName, errorType)
+				}
+
+				// Add trace to session
+				session.AddTrace(trace)
+
+				// Log the ReAct trace
+				log.Printf("[REACT TRACE] %s", trace.String())
 
 				// Log audit entry if configured
 				if e.audit != nil {
@@ -366,30 +451,20 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 					})
 				}
 
+				// Build tool result for Claude
 				if err != nil {
-					execution.Error = err.Error()
 					toolResults = append(toolResults, anthropic.NewToolResultBlock(
-						block.ID,
-						err.Error(),
-						true,
-					))
+						block.ID, err.Error(), true))
 				} else if result != nil && !result.Success {
-					execution.Error = result.Error
 					toolResults = append(toolResults, anthropic.NewToolResultBlock(
-						block.ID,
-						result.Error,
-						true,
-					))
+						block.ID, result.Error, true))
 				} else {
 					if result != nil {
 						execution.Result = result.Data
 					}
 					resultBytes, _ := json.Marshal(result.Data)
 					toolResults = append(toolResults, anthropic.NewToolResultBlock(
-						block.ID,
-						string(resultBytes),
-						false,
-					))
+						block.ID, string(resultBytes), false))
 				}
 
 				toolsUsed = append(toolsUsed, execution)
@@ -459,6 +534,170 @@ func (e *Engine) ExecuteTool(ctx context.Context, userID, toolName string, input
 	})
 }
 
+// RunConfirmedAction resumes the ReAct loop for a confirmed write operation.
+// This ensures traces are created and Claude can respond to the result.
+func (e *Engine) RunConfirmedAction(ctx context.Context, input *Input, action *core.PendingAction) (*Output, error) {
+	// Create session from input
+	userID := ""
+	conversationID := ""
+	if input.Context != nil {
+		userID = input.Context.UserID
+		conversationID = input.Context.ConversationID
+	}
+	session := NewSession(userID, conversationID)
+
+	// Restore history - this includes the original tool_use block
+	session.RestoreHistory(input.History)
+
+	// Extract thought (already stored in action)
+	thought := action.Thought
+
+	// Get tool from registry
+	tool, ok := e.registry.Get(action.Tool)
+	if !ok {
+		return nil, fmt.Errorf("unknown tool: %s", action.Tool)
+	}
+
+	// Create trace object (THINK phase already done)
+	trace := &core.Trace{
+		ID:          uuid.New().String(),
+		SessionID:   session.ID,
+		TurnNumber:  session.TurnCount,
+		Thought:     thought,
+		Action:      action.Tool,
+		ActionInput: action.Input,
+		Timestamp:   time.Now().Unix(),
+		Metadata:    make(map[string]string),
+	}
+	trace.Metadata["confirmed"] = "true"
+	trace.Metadata["confirmation_id"] = action.ID
+
+	// PHASE 3: ACT - Execute the confirmed tool
+	// Note: Pass empty confirmationID since confirmation was already handled locally.
+	// The HTTPExecutor will call ExecuteWrite() directly instead of trying to
+	// confirm via the remote API (which doesn't know about our local confirmations).
+	startTime := time.Now()
+	result, toolErr := tool.Execute(ctx, &core.ToolParams{
+		UserID:         action.UserID,
+		Input:          action.Input,
+		ConfirmationID: "", // Empty string = already confirmed, execute directly
+		RequestID:      session.ID,
+	})
+
+	durationMs := time.Since(startTime).Milliseconds()
+
+	// PHASE 4: OBSERVE - Format observation and complete trace
+	trace.Success = (toolErr == nil && result != nil && result.Success)
+	trace.Observation = formatObservation(tool, result, toolErr)
+
+	if !trace.Success {
+		if toolErr != nil {
+			trace.Metadata["error"] = toolErr.Error()
+		} else if result != nil && !result.Success {
+			trace.Metadata["error"] = result.Error
+		}
+
+		errorType := categorizeError(trace.Metadata["error"])
+		trace.Metadata["error_type"] = errorType
+		trace.Metadata["prevention"] = generatePrevention(action.Tool, errorType)
+	}
+
+	// Add trace to session
+	session.AddTrace(trace)
+	log.Printf("[REACT TRACE] %s", trace.String())
+
+	// Build tool result block for Claude
+	var toolResult anthropic.ContentBlockParamUnion
+	if toolErr != nil {
+		log.Printf("[CONFIRMATION] Tool execution error, will send to Claude: %v", toolErr)
+		toolResult = anthropic.NewToolResultBlock(action.BlockID, toolErr.Error(), true)
+	} else if result != nil && !result.Success {
+		log.Printf("[CONFIRMATION] Tool execution failed, will send to Claude: %s", result.Error)
+		toolResult = anthropic.NewToolResultBlock(action.BlockID, result.Error, true)
+	} else {
+		log.Printf("[CONFIRMATION] Tool execution succeeded, sending result to Claude")
+		resultBytes, _ := json.Marshal(result.Data)
+		toolResult = anthropic.NewToolResultBlock(action.BlockID, string(resultBytes), false)
+	}
+
+	// Add tool result to session (the tool_use block is already in history from RestoreHistory)
+	session.AddToolResults([]anthropic.ContentBlockParamUnion{toolResult})
+	log.Printf("[CONFIRMATION] Calling Claude API to get contextual response...")
+
+	// Continue the loop - call Claude with the result
+	// Claude will see the tool result and generate a response
+	model := input.Model
+	if model == "" {
+		model = "claude-sonnet-4-20250514"
+	}
+	maxTokens := input.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 4096
+	}
+
+	systemPrompt := input.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = DefaultSystemPrompt
+	}
+
+	params := anthropic.MessageNewParams{
+		Model:     anthropic.Model(model),
+		MaxTokens: maxTokens,
+		Messages:  session.Messages(),
+		System: []anthropic.TextBlockParam{
+			{Text: systemPrompt},
+		},
+	}
+
+	resp, err := e.client.Messages.New(ctx, params)
+	if err != nil {
+		log.Printf("[CONFIRMATION] Claude API error: %v", err)
+		return nil, fmt.Errorf("claude api error after confirmation: %w", err)
+	}
+
+	log.Printf("[CONFIRMATION] Claude responded successfully")
+
+	// Extract text response
+	var textResponse string
+	for _, block := range resp.Content {
+		if block.Type == "text" {
+			textResponse += block.Text
+		}
+	}
+
+	log.Printf("[CONFIRMATION] Claude's response: %s", textResponse)
+
+	session.AddAssistantResponse(resp)
+
+	// Build response blocks for persistence
+	responseBlocks := responseToBlocks(resp)
+
+	// Build tool execution record
+	var toolInput interface{}
+	json.Unmarshal(action.Input, &toolInput)
+	execution := core.ToolExecution{
+		Tool:       action.Tool,
+		Input:      toolInput,
+		DurationMs: durationMs,
+	}
+	if toolErr != nil {
+		execution.Error = toolErr.Error()
+	} else if result != nil {
+		if !result.Success {
+			execution.Error = result.Error
+		} else {
+			execution.Result = result.Data
+		}
+	}
+
+	return &Output{
+		Type:           OutputComplete,
+		Text:           textResponse,
+		ToolsUsed:      []core.ToolExecution{execution},
+		ResponseBlocks: responseBlocks,
+	}, nil
+}
+
 // createMessageStreaming handles streaming API calls.
 func (e *Engine) createMessageStreaming(ctx context.Context, params anthropic.MessageNewParams, callback func(string, bool)) (*anthropic.Message, error) {
 	stream := e.client.Messages.NewStreaming(ctx, params)
@@ -507,6 +746,105 @@ func responseToBlocks(resp *anthropic.Message) []core.ContentBlock {
 		}
 	}
 	return blocks
+}
+
+// formatObservation handles observation formatting with fallback
+func formatObservation(tool core.Tool, result *core.ToolResult, err error) string {
+	// Try custom formatter first (optional interface)
+	type ObservationFormatter interface {
+		FormatObservation(result *core.ToolResult, err error) string
+	}
+	if formatter, ok := tool.(ObservationFormatter); ok {
+		return formatter.FormatObservation(result, err)
+	}
+
+	// Default fallback formatting
+	if err != nil {
+		return fmt.Sprintf("Error: %s", err.Error())
+	}
+	if result == nil {
+		return "No result returned"
+	}
+	if !result.Success {
+		return fmt.Sprintf("Failed: %s", result.Error)
+	}
+
+	// Format success based on data type
+	switch v := result.Data.(type) {
+	case map[string]interface{}:
+		if msg, ok := v["message"].(string); ok {
+			return msg
+		}
+		if status, ok := v["status"].(string); ok {
+			return fmt.Sprintf("Success: %s", status)
+		}
+		bytes, _ := json.Marshal(v)
+		return string(bytes)
+	case string:
+		return v
+	default:
+		return fmt.Sprintf("Success: %v", v)
+	}
+}
+
+// categorizeError maps error messages to error types for reflexion
+func categorizeError(errMsg string) string {
+	if errMsg == "" {
+		return "unknown"
+	}
+
+	errLower := strings.ToLower(errMsg)
+
+	switch {
+	case strings.Contains(errLower, "insufficient"), strings.Contains(errLower, "not enough"):
+		return "insufficient_balance"
+	case strings.Contains(errLower, "not found"), strings.Contains(errLower, "does not exist"):
+		return "not_found"
+	case strings.Contains(errLower, "invalid"), strings.Contains(errLower, "malformed"):
+		return "invalid_input"
+	case strings.Contains(errLower, "unauthorized"), strings.Contains(errLower, "forbidden"):
+		return "permission_denied"
+	case strings.Contains(errLower, "timeout"), strings.Contains(errLower, "deadline"):
+		return "timeout"
+	case strings.Contains(errLower, "rate limit"), strings.Contains(errLower, "too many"):
+		return "rate_limit"
+	case strings.Contains(errLower, "network"), strings.Contains(errLower, "connection"):
+		return "network_error"
+	default:
+		return "unknown"
+	}
+}
+
+// generatePrevention suggests how to avoid this error in the future
+func generatePrevention(action, errorType string) string {
+	preventionMap := map[string]string{
+		"send_money:insufficient_balance":          "Check balance with get_balance before attempting transfer",
+		"send_money:not_found":                     "Verify recipient exists with search_users before transfer",
+		"send_money:invalid_input":                 "Validate amount is positive and recipient ID format is correct",
+		"deposit_savings:insufficient_balance":     "Check wallet balance before depositing to savings",
+		"withdraw_savings:insufficient_balance":    "Check savings balance with get_savings_balance before withdrawal",
+	}
+
+	key := action + ":" + errorType
+	if prevention, ok := preventionMap[key]; ok {
+		return prevention
+	}
+
+	// Generic prevention by error type
+	switch errorType {
+	case "insufficient_balance":
+		return "Check balance before attempting operation"
+	case "not_found":
+		return "Verify the entity exists before referencing it"
+	case "invalid_input":
+		return "Validate input parameters before submission"
+	case "rate_limit":
+		return "Implement retry with backoff"
+	case "timeout":
+		return "Retry operation with timeout handling"
+	default:
+		return "Review error message and adjust approach accordingly"
+	}
 }
 
 // RunAgent executes an Agent using the engine.
@@ -566,6 +904,22 @@ GUIDELINES:
 - Ask clarifying questions when needed
 - Use tools when you have enough information
 - All money movements require user confirmation
+
+REASONING PATTERN:
+When using tools, include a "thought" field explaining your reasoning:
+1. What you've verified (e.g., "User's balance is $500, sufficient for $100 transfer")
+2. Why you're taking this action (e.g., "Need to check balance before attempting transfer")
+3. What you expect to happen (e.g., "This will return the current account balance")
+
+For write operations (transfers, payments, withdrawals), the thought field is REQUIRED.
+
+Good thought examples:
+- "User requested $50 to Alice. I've confirmed the amount and will check if balance is sufficient."
+- "Balance is $200, sufficient for $50 transfer. Proceeding with send_money."
+
+Bad thought examples:
+- "Sending money" (too vague, doesn't explain reasoning)
+- "User asked" (doesn't verify or explain decision)
 
 AVAILABLE ACTIONS:
 - Check balances and transactions

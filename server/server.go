@@ -453,46 +453,68 @@ func (s *Server) handleConfirm(ctx context.Context, conn *websocket.Conn, sess *
 		return
 	}
 
-	// Execute the confirmed tool
-	// Pass empty confirmationID so ExecutorTool calls ExecuteWrite() directly
-	// instead of executor.Confirm(). The confirmation was already retrieved from
-	// local storage above, so we just need to execute the tool with the original params.
-	result, err := s.engine.ExecuteTool(ctx, userID, action.Tool, action.Input, "")
-
-	var resultContent string
-	var isError bool
-	if err != nil {
-		resultContent = fmt.Sprintf("Error: %v", err)
-		isError = true
-	} else if !result.Success {
-		resultContent = result.Error
-		isError = true
-	} else {
-		resultBytes, _ := json.Marshal(result.Data)
-		resultContent = string(resultBytes)
+	// Resume engine loop with confirmed action (NEW APPROACH)
+	input := &engine.Input{
+		UserMessage:  "", // No new user message
+		History:      sess.History,
+		SystemPrompt: s.config.SystemPrompt,
+		Model:        s.config.Model,
+		MaxTokens:    s.config.MaxTokens,
+		Context: &core.Context{
+			UserID:         userID,
+			ConversationID: sess.ConversationID,
+			Limits: &core.ExecutionLimits{
+				MaxTurns:   10,
+				MaxTokens:  s.config.MaxTokens,
+				CanConfirm: false, // Already confirmed
+			},
+		},
 	}
 
-	// Add tool result to history
-	sess.History = append(sess.History, core.NewToolResultMessage([]core.ToolResultContent{
-		{ToolUseID: action.BlockID, Content: resultContent, IsError: isError},
-	}))
+	// Run the confirmed action through the ReAct loop
+	output, err := s.engine.RunConfirmedAction(ctx, input, action)
+	if err != nil {
+		// Add error tool result to history
+		sess.History = append(sess.History, core.NewToolResultMessage([]core.ToolResultContent{
+			{ToolUseID: action.BlockID, Content: err.Error(), IsError: true},
+		}))
 
-	if isError {
 		s.send(conn, ServerMessage{
 			Type:    "text",
-			Content: fmt.Sprintf("Sorry, that action failed: %s", resultContent),
+			Content: fmt.Sprintf("Sorry, the action failed: %v", err),
 		})
 		s.send(conn, ServerMessage{Type: "complete"})
 		return
 	}
 
-	// Format success message
-	resultMsg := formatToolResult(action.Tool, result.Data)
-	sess.History = append(sess.History, core.NewAssistantMessage(resultMsg))
+	// Add tool_result to history (the tool_use is already there from when confirmation was created)
+	// Build tool result content from output
+	var toolResultContent string
+	var isError bool
+	if len(output.ToolsUsed) > 0 && output.ToolsUsed[0].Error != "" {
+		toolResultContent = output.ToolsUsed[0].Error
+		isError = true
+	} else if len(output.ToolsUsed) > 0 && output.ToolsUsed[0].Result != nil {
+		resultBytes, _ := json.Marshal(output.ToolsUsed[0].Result)
+		toolResultContent = string(resultBytes)
+		isError = false
+	} else {
+		toolResultContent = "Success"
+		isError = false
+	}
 
-	s.persistMessage(ctx, sess.ConversationID, "assistant", resultMsg)
+	sess.History = append(sess.History, core.NewToolResultMessage([]core.ToolResultContent{
+		{ToolUseID: action.BlockID, Content: toolResultContent, IsError: isError},
+	}))
 
-	s.send(conn, ServerMessage{Type: "text", Content: resultMsg})
+	// Add Claude's response to history
+	sess.History = append(sess.History, core.NewAssistantMessageWithBlocks(output.ResponseBlocks))
+
+	// Persist Claude's response
+	s.persistMessage(ctx, sess.ConversationID, "assistant", output.Text)
+
+	// Send Claude's contextual response (not a canned message)
+	s.send(conn, ServerMessage{Type: "text", Content: output.Text})
 	s.send(conn, ServerMessage{Type: "complete"})
 }
 

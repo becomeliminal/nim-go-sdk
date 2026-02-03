@@ -63,3 +63,43 @@ func ArrayProperty(description string, itemType map[string]interface{}) map[stri
 		"items":       itemType,
 	}
 }
+
+// WithThought adds a thought parameter to an existing schema.
+// If requireThought is true, "thought" is added to the required array.
+func WithThought(schema map[string]interface{}, requireThought bool) map[string]interface{} {
+	// Clone schema
+	result := make(map[string]interface{})
+	for k, v := range schema {
+		result[k] = v
+	}
+
+	// Get or create properties map
+	props, ok := result["properties"].(map[string]interface{})
+	if !ok {
+		props = make(map[string]interface{})
+		result["properties"] = props
+	}
+
+	// Add thought property
+	props["thought"] = StringProperty(
+		"Your reasoning about why you're using this tool and what you expect to accomplish. " +
+			"For write operations, explain your decision-making process.",
+	)
+
+	// Add to required array if needed
+	if requireThought {
+		required, ok := result["required"].([]string)
+		if !ok {
+			required = []string{}
+		}
+		result["required"] = append(required, "thought")
+	}
+
+	return result
+}
+
+// BuildSchemaWithThought creates an ObjectSchema and adds thought support in one call.
+func BuildSchemaWithThought(properties map[string]interface{}, requireThought bool, required ...string) map[string]interface{} {
+	schema := ObjectSchema(properties, required...)
+	return WithThought(schema, requireThought)
+}
