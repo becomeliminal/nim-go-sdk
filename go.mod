@@ -7,6 +7,8 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/philippgille/chromem-go v0.7.0
+	github.com/yalue/onnxruntime_go v1.13.0
 )
 
 require (

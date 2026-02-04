@@ -16,6 +16,7 @@ import (
 	"github.com/becomeliminal/nim-go-sdk/core"
 	"github.com/becomeliminal/nim-go-sdk/engine"
 	"github.com/becomeliminal/nim-go-sdk/executor"
+	"github.com/becomeliminal/nim-go-sdk/memory"
 	"github.com/becomeliminal/nim-go-sdk/store"
 )
 
@@ -63,6 +64,10 @@ type Config struct {
 	// AuditLogger logs agent actions for compliance.
 	// If nil, no audit logging is performed.
 	AuditLogger engine.AuditLogger
+
+	// Memory provides memory system for trace retrieval and storage.
+	// If nil, no memory system is used.
+	Memory memory.Manager
 
 	// AnthropicOptions are additional options for the Anthropic client.
 	// This can be used to customize the HTTP client for testing.
@@ -124,6 +129,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.AuditLogger != nil {
 		engineOpts = append(engineOpts, engine.WithAudit(cfg.AuditLogger))
+	}
+	if cfg.Memory != nil {
+		engineOpts = append(engineOpts, engine.WithMemory(cfg.Memory))
 	}
 
 	// Create engine

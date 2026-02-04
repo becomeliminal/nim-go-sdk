@@ -10,6 +10,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/becomeliminal/nim-go-sdk/core"
+	"github.com/becomeliminal/nim-go-sdk/memory"
 	"github.com/google/uuid"
 )
 
@@ -17,8 +18,9 @@ import (
 type Engine struct {
 	client     *anthropic.Client
 	registry   *ToolRegistry
-	guardrails Guardrails  // Optional: rate limiting and circuit breaker
-	audit      AuditLogger // Optional: audit logging
+	guardrails Guardrails      // Optional: rate limiting and circuit breaker
+	audit      AuditLogger     // Optional: audit logging
+	memory     memory.Manager  // Optional: memory system for trace retrieval/storage
 }
 
 // Option configures the engine.
@@ -35,6 +37,13 @@ func WithGuardrails(g Guardrails) Option {
 func WithAudit(a AuditLogger) Option {
 	return func(e *Engine) {
 		e.audit = a
+	}
+}
+
+// WithMemory configures the engine with a memory manager.
+func WithMemory(m memory.Manager) Option {
+	return func(e *Engine) {
+		e.memory = m
 	}
 }
 
@@ -144,6 +153,22 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 		}
 	}
 
+	// === PHASE 0: RETRIEVE MEMORIES ===
+	var enrichment string
+	if e.memory != nil && input.UserMessage != "" && input.Context != nil {
+		log.Printf("[MEMORY] Retrieving memories for query: %s", input.UserMessage)
+
+		// Manager decides how to retrieve and format
+		var err error
+		enrichment, err = e.memory.Retrieve(ctx, input.Context.UserID, input.UserMessage)
+		if err != nil {
+			log.Printf("[MEMORY] Retrieval failed: %v", err)
+			enrichment = "" // Non-fatal, continue without memories
+		} else if enrichment != "" {
+			log.Printf("[MEMORY] Retrieved memories successfully")
+		}
+	}
+
 	// Apply defaults
 	model := input.Model
 	if model == "" {
@@ -156,6 +181,11 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 	systemPrompt := input.SystemPrompt
 	if systemPrompt == "" {
 		systemPrompt = DefaultSystemPrompt
+	}
+
+	// === PHASE 1: ENRICH SYSTEM PROMPT ===
+	if enrichment != "" {
+		systemPrompt += "\n\n" + enrichment
 	}
 
 	// Get limits from context
@@ -505,6 +535,20 @@ Please explain:
 				e.guardrails.RecordSuccess(ctx, input.Context.UserID)
 			}
 
+			// === PHASE 5: RECORD TRACES ===
+			if e.memory != nil && len(session.Traces) > 0 && input.Context != nil {
+				log.Printf("[MEMORY] Recording %d traces", len(session.Traces))
+
+				// Manager decides what to store and how
+				traces := session.Traces
+				userID := input.Context.UserID
+
+				// Record traces (implementor can make async if desired)
+				if err := e.memory.RecordTraces(ctx, userID, traces); err != nil {
+					log.Printf("[MEMORY] Failed to record traces: %v", err)
+				}
+			}
+
 			return &Output{
 				Type:       OutputComplete,
 				Text:       textResponse,
@@ -533,6 +577,7 @@ func (e *Engine) ExecuteTool(ctx context.Context, userID, toolName string, input
 		RequestID:      confirmationID,
 	})
 }
+
 
 // RunConfirmedAction resumes the ReAct loop for a confirmed write operation.
 // This ensures traces are created and Claude can respond to the result.
@@ -687,6 +732,20 @@ func (e *Engine) RunConfirmedAction(ctx context.Context, input *Input, action *c
 			execution.Error = result.Error
 		} else {
 			execution.Result = result.Data
+		}
+	}
+
+	// === PHASE 5: RECORD TRACES ===
+	if e.memory != nil && len(session.Traces) > 0 && input.Context != nil {
+		log.Printf("[MEMORY] Recording %d traces from confirmed action", len(session.Traces))
+
+		// Manager decides what to store and how
+		traces := session.Traces
+		userID := input.Context.UserID
+
+		// Record traces (implementor can make async if desired)
+		if err := e.memory.RecordTraces(ctx, userID, traces); err != nil {
+			log.Printf("[MEMORY] Failed to record traces: %v", err)
 		}
 	}
 

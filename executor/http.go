@@ -18,7 +18,6 @@ import (
 // This is the public implementation used by external developers.
 type HTTPExecutor struct {
 	baseURL    string
-	apiKey     string  // Deprecated: use jwtToken
 	jwtToken   string  // JWT for Bearer authentication
 	httpClient *http.Client
 }
@@ -27,10 +26,6 @@ type HTTPExecutor struct {
 type HTTPExecutorConfig struct {
 	// BaseURL is the agent_gateway URL (e.g., "https://api.liminal.cash").
 	BaseURL string
-
-	// Deprecated: Use JWTToken instead.
-	// APIKey is the Liminal API key for authentication.
-	APIKey string
 
 	// JWTToken is the JWT token for Bearer authentication.
 	JWTToken string
@@ -48,8 +43,7 @@ func NewHTTPExecutor(cfg HTTPExecutorConfig) *HTTPExecutor {
 
 	return &HTTPExecutor{
 		baseURL:  cfg.BaseURL,
-		apiKey:   cfg.APIKey,   // Keep for backward compatibility
-		jwtToken: cfg.JWTToken, // New JWT field
+		jwtToken: cfg.JWTToken,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -183,14 +177,10 @@ func (e *HTTPExecutor) doRequest(ctx context.Context, method, endpoint string, b
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	// Prefer JWT over API key
+	// Set JWT authentication
 	if e.jwtToken != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", e.jwtToken))
 		fmt.Printf("[HTTP] Using JWT auth (token: %s...)\n", e.jwtToken[:20])
-	} else if e.apiKey != "" {
-		// Fallback to API key for backward compatibility
-		req.Header.Set("X-API-Key", e.apiKey)
-		fmt.Printf("[HTTP] Using API key auth\n")
 	} else {
 		fmt.Printf("[HTTP] WARNING: No authentication configured!\n")
 	}
