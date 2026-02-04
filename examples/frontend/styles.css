@@ -57,7 +57,20 @@ h1 {
   font-size: clamp(2.5rem, 8vw, 4rem);
   line-height: 1.1;
   letter-spacing: -0.02em;
-  margin-bottom: 3rem;
+  margin-bottom: 2rem;
+}
+
+p {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--brown);
+  margin-bottom: 1.5rem;
+}
+
+.instructions {
+  font-size: 0.9375rem;
+  color: var(--beige);
+  margin-top: 2rem;
 }
 
 ol {

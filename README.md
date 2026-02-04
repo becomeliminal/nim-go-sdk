@@ -11,6 +11,7 @@ This SDK implements Claude as a **financial brain** - an intelligent agent that 
 **Key Capabilities:**
 - Natural language financial operations ("Send $50 to mom" → search user → check balance → transfer funds)
 - Multi-turn reasoning with Claude as the orchestration engine
+- **Memory system** - agents learn from past interactions using semantic vector search
 - Built-in safety: automatic confirmations for all write operations
 - WebSocket streaming for real-time conversational experiences
 - Extensible tool system for custom business logic
