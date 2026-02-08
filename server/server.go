@@ -401,6 +401,22 @@ func (s *Server) handleMessage(ctx context.Context, conn *websocket.Conn, sess *
 	}
 
 	s.handleOutput(ctx, conn, sess, output)
+
+	// Generate conversation title after first turn completes successfully
+	if sess.TurnCount == 1 && output.Type == engine.OutputComplete {
+		go func() {
+			title, err := s.engine.GenerateTitleFromFirstMessage(context.Background(), content)
+			if err != nil {
+				log.Printf("[TITLE] Failed to generate: %v", err)
+				return
+			}
+			if err := s.conversations.SetTitle(context.Background(), sess.ConversationID, title); err != nil {
+				log.Printf("[TITLE] Failed to save: %v", err)
+				return
+			}
+			s.send(conn, ServerMessage{Type: "title_updated", Content: title, ConversationID: sess.ConversationID})
+		}()
+	}
 }
 
 func (s *Server) handleOutput(ctx context.Context, conn *websocket.Conn, sess *session, output *engine.Output) {
