@@ -549,6 +549,13 @@ Please explain:
 				}
 			}
 
+			// === PHASE 5b: RECORD CONVERSATION ===
+			if e.memory != nil && input.Context != nil && input.UserMessage != "" && textResponse != "" {
+				if err := e.memory.RecordConversation(ctx, input.Context.UserID, input.UserMessage, textResponse); err != nil {
+					log.Printf("[MEMORY] Failed to record conversation: %v", err)
+				}
+			}
+
 			return &Output{
 				Type:       OutputComplete,
 				Text:       textResponse,
@@ -746,6 +753,13 @@ func (e *Engine) RunConfirmedAction(ctx context.Context, input *Input, action *c
 		// Record traces (implementor can make async if desired)
 		if err := e.memory.RecordTraces(ctx, userID, traces); err != nil {
 			log.Printf("[MEMORY] Failed to record traces: %v", err)
+		}
+	}
+
+	// === PHASE 5b: RECORD CONVERSATION ===
+	if e.memory != nil && input.Context != nil && textResponse != "" {
+		if err := e.memory.RecordConversation(ctx, input.Context.UserID, "", textResponse); err != nil {
+			log.Printf("[MEMORY] Failed to record conversation: %v", err)
 		}
 	}
 

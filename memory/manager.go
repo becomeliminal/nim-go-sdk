@@ -113,6 +113,12 @@ func (m *SimpleManager) RecordTraces(ctx context.Context, userID string, traces 
 	return nil
 }
 
+// RecordConversation is a no-op for SimpleManager.
+// Custom implementations (e.g., Mem0Manager) can store conversations and extract facts.
+func (m *SimpleManager) RecordConversation(ctx context.Context, userID string, userMessage string, assistantResponse string) error {
+	return nil
+}
+
 // formatMemories formats retrieved memories into a structured string.
 func (m *SimpleManager) formatMemories(memories []Memory, userID string, query string) string {
 	if len(memories) == 0 {

@@ -83,6 +83,17 @@ type Manager interface {
 	//
 	// This is called asynchronously after the ReAct loop completes.
 	RecordTraces(ctx context.Context, userID string, traces []*core.Trace) error
+
+	// RecordConversation stores a conversational exchange as a memory.
+	// Called after every successful agent response with the user's message
+	// and the assistant's text response. Captures context from exchanges
+	// that may not involve tool calls (e.g., "Faiz is my friend").
+	//
+	// The Manager decides:
+	//   - Whether the exchange is worth storing (filtering trivial messages)
+	//   - How to process it (fact extraction, importance scoring)
+	//   - What format to store it in
+	RecordConversation(ctx context.Context, userID string, userMessage string, assistantResponse string) error
 }
 
 // Store is the vector storage backend interface.
