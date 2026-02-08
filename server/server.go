@@ -477,7 +477,8 @@ func (s *Server) handleConfirm(ctx context.Context, conn *websocket.Conn, sess *
 		return
 	}
 
-	// Resume engine loop with confirmed action (NEW APPROACH)
+	// Resume engine loop with confirmed action
+	// CanConfirm: true enables chained confirmations (e.g., "send to each employee")
 	input := &engine.Input{
 		UserMessage:  "", // No new user message
 		History:      sess.History,
@@ -490,7 +491,7 @@ func (s *Server) handleConfirm(ctx context.Context, conn *websocket.Conn, sess *
 			Limits: &core.ExecutionLimits{
 				MaxTurns:   10,
 				MaxTokens:  s.config.MaxTokens,
-				CanConfirm: false, // Already confirmed
+				CanConfirm: true, // Allow follow-up confirmations
 			},
 		},
 	}
@@ -511,16 +512,21 @@ func (s *Server) handleConfirm(ctx context.Context, conn *websocket.Conn, sess *
 		return
 	}
 
-	// Add tool_result to history (the tool_use is already there from when confirmation was created)
-	// Build tool result content from output
+	// Add tool_result for the confirmed action to history
+	// (the tool_use is already there from when confirmation was created)
 	var toolResultContent string
 	var isError bool
 	if len(output.ToolsUsed) > 0 && output.ToolsUsed[0].Error != "" {
 		toolResultContent = output.ToolsUsed[0].Error
 		isError = true
 	} else if len(output.ToolsUsed) > 0 && output.ToolsUsed[0].Result != nil {
-		resultBytes, _ := json.Marshal(output.ToolsUsed[0].Result)
-		toolResultContent = string(resultBytes)
+		resultBytes, err := json.Marshal(output.ToolsUsed[0].Result)
+		if err != nil {
+			log.Printf("[CONFIRMATION] Failed to marshal tool result: %v", err)
+			toolResultContent = "Success"
+		} else {
+			toolResultContent = string(resultBytes)
+		}
 		isError = false
 	} else {
 		toolResultContent = "Success"
@@ -531,15 +537,11 @@ func (s *Server) handleConfirm(ctx context.Context, conn *websocket.Conn, sess *
 		{ToolUseID: action.BlockID, Content: toolResultContent, IsError: isError},
 	}))
 
-	// Add Claude's response to history
-	sess.History = append(sess.History, core.NewAssistantMessageWithBlocks(output.ResponseBlocks))
-
-	// Persist Claude's response
-	s.persistMessage(ctx, sess.ConversationID, "assistant", output.Text)
-
-	// Send Claude's contextual response (not a canned message)
-	s.send(conn, ServerMessage{Type: "text", Content: output.Text})
-	s.send(conn, ServerMessage{Type: "complete"})
+	// Delegate to handleOutput which handles all output types:
+	// - OutputComplete: sends text + complete
+	// - OutputConfirmationNeeded: stores confirmation + sends confirm_request (chained)
+	// - OutputError: sends error
+	s.handleOutput(ctx, conn, sess, output)
 }
 
 func (s *Server) handleCancel(ctx context.Context, conn *websocket.Conn, sess *session, userID, actionID string) {

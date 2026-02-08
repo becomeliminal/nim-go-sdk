@@ -55,6 +55,17 @@ func (s *Session) AddAssistantResponse(resp *anthropic.Message) {
 	})
 }
 
+// AddAssistantBlocks adds filtered content blocks as an assistant message.
+// Used when we need to store only a subset of Claude's response (e.g., filtering
+// out unprocessed tool_use blocks during confirmation).
+func (s *Session) AddAssistantBlocks(blocks []core.ContentBlock) {
+	content := convertCoreBlocksToAPI(blocks)
+	s.messages = append(s.messages, anthropic.MessageParam{
+		Role:    anthropic.MessageParamRoleAssistant,
+		Content: content,
+	})
+}
+
 // AddToolResults adds tool results to continue the conversation.
 func (s *Session) AddToolResults(results []anthropic.ContentBlockParamUnion) {
 	s.messages = append(s.messages, anthropic.MessageParam{

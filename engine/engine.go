@@ -134,6 +134,19 @@ const (
 	OutputError
 )
 
+// loopConfig holds the parameters for the ReAct loop.
+type loopConfig struct {
+	model          string
+	maxTokens      int64
+	systemPrompt   string
+	maxTurns       int
+	canConfirm     bool
+	apiTools       []anthropic.ToolUnionParam
+	agentName      string
+	auditParentID  *string
+	streamCallback func(chunk string, done bool)
+}
+
 // Run executes the agent loop until completion or confirmation is needed.
 func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 	// Check guardrails if configured
@@ -210,9 +223,6 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 	}
 	session := NewSession(userID, conversationID)
 
-	// Track cumulative token usage
-	var totalTokens core.TokenUsage
-
 	// Restore history
 	session.RestoreHistory(input.History)
 
@@ -241,6 +251,216 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 		auditParentID = input.Context.AuditParentID
 	}
 
+	cfg := &loopConfig{
+		model:          model,
+		maxTokens:      maxTokens,
+		systemPrompt:   systemPrompt,
+		maxTurns:       maxTurns,
+		canConfirm:     canConfirm,
+		apiTools:       apiTools,
+		agentName:      agentName,
+		auditParentID:  auditParentID,
+		streamCallback: input.StreamCallback,
+	}
+
+	return e.runLoop(ctx, input, session, cfg)
+}
+
+// ExecuteTool executes a confirmed write operation.
+func (e *Engine) ExecuteTool(ctx context.Context, userID, toolName string, input json.RawMessage, confirmationID string) (*core.ToolResult, error) {
+	tool, ok := e.registry.Get(toolName)
+	if !ok {
+		return nil, fmt.Errorf("unknown tool: %s", toolName)
+	}
+
+	return tool.Execute(ctx, &core.ToolParams{
+		UserID:         userID,
+		Input:          input,
+		ConfirmationID: confirmationID,
+		RequestID:      confirmationID,
+	})
+}
+
+// RunConfirmedAction resumes the ReAct loop for a confirmed write operation.
+// It executes the confirmed tool, adds the result to the session, and then
+// enters the full ReAct loop so Claude can issue follow-up tool calls
+// (e.g., sending to the next recipient in a multi-action sequence).
+func (e *Engine) RunConfirmedAction(ctx context.Context, input *Input, action *core.PendingAction) (*Output, error) {
+	// Create session from input
+	userID := ""
+	conversationID := ""
+	if input.Context != nil {
+		userID = input.Context.UserID
+		conversationID = input.Context.ConversationID
+	}
+	session := NewSession(userID, conversationID)
+
+	// Restore history - this includes the original tool_use block
+	session.RestoreHistory(input.History)
+
+	// Extract thought (already stored in action)
+	thought := action.Thought
+
+	// Get tool from registry
+	tool, ok := e.registry.Get(action.Tool)
+	if !ok {
+		return nil, fmt.Errorf("unknown tool: %s", action.Tool)
+	}
+
+	// Create trace object (THINK phase already done)
+	trace := &core.Trace{
+		ID:          uuid.New().String(),
+		SessionID:   session.ID,
+		TurnNumber:  session.TurnCount,
+		Thought:     thought,
+		Action:      action.Tool,
+		ActionInput: action.Input,
+		Timestamp:   time.Now().Unix(),
+		Metadata:    make(map[string]string),
+	}
+	trace.Metadata["confirmed"] = "true"
+	trace.Metadata["confirmation_id"] = action.ID
+
+	// PHASE 3: ACT - Execute the confirmed tool
+	// Note: Pass empty confirmationID since confirmation was already handled locally.
+	// The HTTPExecutor will call ExecuteWrite() directly instead of trying to
+	// confirm via the remote API (which doesn't know about our local confirmations).
+	startTime := time.Now()
+	result, toolErr := tool.Execute(ctx, &core.ToolParams{
+		UserID:         action.UserID,
+		Input:          action.Input,
+		ConfirmationID: "", // Empty string = already confirmed, execute directly
+		RequestID:      session.ID,
+	})
+
+	durationMs := time.Since(startTime).Milliseconds()
+
+	// PHASE 4: OBSERVE - Format observation and complete trace
+	trace.Success = (toolErr == nil && result != nil && result.Success)
+	trace.Observation = formatObservation(tool, result, toolErr)
+
+	if !trace.Success {
+		if toolErr != nil {
+			trace.Metadata["error"] = toolErr.Error()
+		} else if result != nil && !result.Success {
+			trace.Metadata["error"] = result.Error
+		}
+
+		errorType := categorizeError(trace.Metadata["error"])
+		trace.Metadata["error_type"] = errorType
+		trace.Metadata["prevention"] = generatePrevention(action.Tool, errorType)
+	}
+
+	// Add trace to session
+	session.AddTrace(trace)
+	log.Printf("[REACT TRACE] %s", trace.String())
+
+	// Build tool result block for Claude
+	var toolResult anthropic.ContentBlockParamUnion
+	if toolErr != nil {
+		log.Printf("[CONFIRMATION] Tool execution error, will send to Claude: %v", toolErr)
+		toolResult = anthropic.NewToolResultBlock(action.BlockID, toolErr.Error(), true)
+	} else if result != nil && !result.Success {
+		log.Printf("[CONFIRMATION] Tool execution failed, will send to Claude: %s", result.Error)
+		toolResult = anthropic.NewToolResultBlock(action.BlockID, result.Error, true)
+	} else {
+		log.Printf("[CONFIRMATION] Tool execution succeeded, sending result to Claude")
+		resultBytes, _ := json.Marshal(result.Data)
+		toolResult = anthropic.NewToolResultBlock(action.BlockID, string(resultBytes), false)
+	}
+
+	// Add tool result to session (the tool_use block is already in history from RestoreHistory)
+	session.AddToolResults([]anthropic.ContentBlockParamUnion{toolResult})
+	log.Printf("[CONFIRMATION] Entering ReAct loop for follow-up processing...")
+
+	// Apply defaults
+	model := input.Model
+	if model == "" {
+		model = "claude-sonnet-4-20250514"
+	}
+	maxTokens := input.MaxTokens
+	if maxTokens == 0 {
+		maxTokens = 4096
+	}
+	systemPrompt := input.SystemPrompt
+	if systemPrompt == "" {
+		systemPrompt = DefaultSystemPrompt
+	}
+
+	// Get limits from context
+	maxTurns := 10
+	canConfirm := true
+	if input.Context != nil && input.Context.Limits != nil {
+		maxTurns = input.Context.Limits.MaxTurns
+		canConfirm = input.Context.Limits.CanConfirm
+	}
+
+	// Get tools so Claude can issue follow-up calls
+	var apiTools []anthropic.ToolUnionParam
+	if len(input.AvailableTools) > 0 {
+		apiTools = e.registry.ToAPIToolsFiltered(FilterByNames(input.AvailableTools...))
+	} else {
+		apiTools = e.registry.ToAPITools()
+	}
+
+	agentName := input.AgentName
+	if agentName == "" {
+		agentName = "default"
+	}
+
+	var auditParentID *string
+	if input.Context != nil && input.Context.AuditParentID != nil {
+		auditParentID = input.Context.AuditParentID
+	}
+
+	cfg := &loopConfig{
+		model:         model,
+		maxTokens:     maxTokens,
+		systemPrompt:  systemPrompt,
+		maxTurns:      maxTurns,
+		canConfirm:    canConfirm,
+		apiTools:      apiTools,
+		agentName:     agentName,
+		auditParentID: auditParentID,
+	}
+
+	// Enter the ReAct loop - this handles follow-up tool calls, new confirmations, etc.
+	output, err := e.runLoop(ctx, input, session, cfg)
+	if err != nil {
+		return output, err
+	}
+
+	// Prepend the confirmed tool execution to ToolsUsed
+	var toolInput interface{}
+	if err := json.Unmarshal(action.Input, &toolInput); err != nil {
+		log.Printf("[CONFIRMATION] Failed to unmarshal action input for execution record: %v", err)
+	}
+	execution := core.ToolExecution{
+		Tool:       action.Tool,
+		Input:      toolInput,
+		DurationMs: durationMs,
+	}
+	if toolErr != nil {
+		execution.Error = toolErr.Error()
+	} else if result != nil {
+		if !result.Success {
+			execution.Error = result.Error
+		} else {
+			execution.Result = result.Data
+		}
+	}
+	output.ToolsUsed = append([]core.ToolExecution{execution}, output.ToolsUsed...)
+
+	return output, nil
+}
+
+// runLoop is the core ReAct loop shared by Run() and RunConfirmedAction().
+// It calls Claude, processes tool_use blocks, executes read-only tools, and
+// returns when Claude responds with text only (OutputComplete) or when a
+// write operation needs user confirmation (OutputConfirmationNeeded).
+func (e *Engine) runLoop(ctx context.Context, input *Input, session *Session, cfg *loopConfig) (*Output, error) {
+	var totalTokens core.TokenUsage
+
 	for {
 		// Check context cancellation
 		if ctx.Err() != nil {
@@ -252,10 +472,10 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 		}
 
 		// Check turn limit
-		if session.TurnCount >= maxTurns {
+		if session.TurnCount >= cfg.maxTurns {
 			return &Output{
 				Type:       OutputError,
-				Error:      fmt.Errorf("exceeded maximum turns (%d)", maxTurns),
+				Error:      fmt.Errorf("exceeded maximum turns (%d)", cfg.maxTurns),
 				TokensUsed: totalTokens,
 			}, nil
 		}
@@ -264,24 +484,24 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 
 		// Build the message request
 		params := anthropic.MessageNewParams{
-			Model:     anthropic.Model(model),
-			MaxTokens: maxTokens,
+			Model:     anthropic.Model(cfg.model),
+			MaxTokens: cfg.maxTokens,
 			Messages:  session.Messages(),
 			System: []anthropic.TextBlockParam{
-				{Text: systemPrompt},
+				{Text: cfg.systemPrompt},
 			},
 		}
 
-		if len(apiTools) > 0 {
-			params.Tools = apiTools
+		if len(cfg.apiTools) > 0 {
+			params.Tools = cfg.apiTools
 		}
 
 		// Call Claude API
 		var resp *anthropic.Message
 		var err error
 
-		if input.StreamCallback != nil {
-			resp, err = e.createMessageStreaming(ctx, params, input.StreamCallback)
+		if cfg.streamCallback != nil {
+			resp, err = e.createMessageStreaming(ctx, params, cfg.streamCallback)
 		} else {
 			resp, err = e.client.Messages.New(ctx, params)
 		}
@@ -368,7 +588,7 @@ Please explain:
 
 				// Check if write operation requiring confirmation
 				if tool.RequiresConfirmation() {
-					if !canConfirm {
+					if !cfg.canConfirm {
 						// Store trace for blocked confirmation
 						trace.Success = false
 						trace.Observation = "Operation blocked: confirmation not allowed in this context"
@@ -469,8 +689,8 @@ Please explain:
 						UserID:     session.UserID,
 						SessionID:  session.ID,
 						RequestID:  session.ID,
-						ParentID:   auditParentID,
-						AgentName:  agentName,
+						ParentID:   cfg.auditParentID,
+						AgentName:  cfg.agentName,
 						ToolName:   toolName,
 						ToolInput:  inputBytes,
 						ToolOutput: outputBytes,
@@ -505,19 +725,17 @@ Please explain:
 			}
 		}
 
-		// Build response blocks for persistence
-		responseBlocks := responseToBlocks(resp)
-
-		// If confirmation needed, return for user approval
+		// If confirmation needed, filter blocks and return for user approval
 		if confirmationNeeded != nil {
-			session.AddAssistantResponse(resp)
+			filteredBlocks := filterBlocksForConfirmation(resp, confirmationNeeded.BlockID)
+			session.AddAssistantBlocks(filteredBlocks)
 
 			return &Output{
 				Type:           OutputConfirmationNeeded,
 				Text:           textResponse,
 				PendingAction:  confirmationNeeded,
 				ToolsUsed:      toolsUsed,
-				ResponseBlocks: responseBlocks,
+				ResponseBlocks: filteredBlocks,
 				TokensUsed:     totalTokens,
 			}, nil
 		}
@@ -526,8 +744,8 @@ Please explain:
 		if len(toolResults) == 0 {
 			session.AddAssistantMessage(textResponse)
 
-			if input.StreamCallback != nil {
-				input.StreamCallback("", true)
+			if cfg.streamCallback != nil {
+				cfg.streamCallback("", true)
 			}
 
 			// Record success with guardrails
@@ -539,11 +757,9 @@ Please explain:
 			if e.memory != nil && len(session.Traces) > 0 && input.Context != nil {
 				log.Printf("[MEMORY] Recording %d traces", len(session.Traces))
 
-				// Manager decides what to store and how
 				traces := session.Traces
 				userID := input.Context.UserID
 
-				// Record traces (implementor can make async if desired)
 				if err := e.memory.RecordTraces(ctx, userID, traces); err != nil {
 					log.Printf("[MEMORY] Failed to record traces: %v", err)
 				}
@@ -568,207 +784,6 @@ Please explain:
 		session.AddAssistantResponse(resp)
 		session.AddToolResults(toolResults)
 	}
-}
-
-// ExecuteTool executes a confirmed write operation.
-func (e *Engine) ExecuteTool(ctx context.Context, userID, toolName string, input json.RawMessage, confirmationID string) (*core.ToolResult, error) {
-	tool, ok := e.registry.Get(toolName)
-	if !ok {
-		return nil, fmt.Errorf("unknown tool: %s", toolName)
-	}
-
-	return tool.Execute(ctx, &core.ToolParams{
-		UserID:         userID,
-		Input:          input,
-		ConfirmationID: confirmationID,
-		RequestID:      confirmationID,
-	})
-}
-
-
-// RunConfirmedAction resumes the ReAct loop for a confirmed write operation.
-// This ensures traces are created and Claude can respond to the result.
-func (e *Engine) RunConfirmedAction(ctx context.Context, input *Input, action *core.PendingAction) (*Output, error) {
-	// Create session from input
-	userID := ""
-	conversationID := ""
-	if input.Context != nil {
-		userID = input.Context.UserID
-		conversationID = input.Context.ConversationID
-	}
-	session := NewSession(userID, conversationID)
-
-	// Restore history - this includes the original tool_use block
-	session.RestoreHistory(input.History)
-
-	// Extract thought (already stored in action)
-	thought := action.Thought
-
-	// Get tool from registry
-	tool, ok := e.registry.Get(action.Tool)
-	if !ok {
-		return nil, fmt.Errorf("unknown tool: %s", action.Tool)
-	}
-
-	// Create trace object (THINK phase already done)
-	trace := &core.Trace{
-		ID:          uuid.New().String(),
-		SessionID:   session.ID,
-		TurnNumber:  session.TurnCount,
-		Thought:     thought,
-		Action:      action.Tool,
-		ActionInput: action.Input,
-		Timestamp:   time.Now().Unix(),
-		Metadata:    make(map[string]string),
-	}
-	trace.Metadata["confirmed"] = "true"
-	trace.Metadata["confirmation_id"] = action.ID
-
-	// PHASE 3: ACT - Execute the confirmed tool
-	// Note: Pass empty confirmationID since confirmation was already handled locally.
-	// The HTTPExecutor will call ExecuteWrite() directly instead of trying to
-	// confirm via the remote API (which doesn't know about our local confirmations).
-	startTime := time.Now()
-	result, toolErr := tool.Execute(ctx, &core.ToolParams{
-		UserID:         action.UserID,
-		Input:          action.Input,
-		ConfirmationID: "", // Empty string = already confirmed, execute directly
-		RequestID:      session.ID,
-	})
-
-	durationMs := time.Since(startTime).Milliseconds()
-
-	// PHASE 4: OBSERVE - Format observation and complete trace
-	trace.Success = (toolErr == nil && result != nil && result.Success)
-	trace.Observation = formatObservation(tool, result, toolErr)
-
-	if !trace.Success {
-		if toolErr != nil {
-			trace.Metadata["error"] = toolErr.Error()
-		} else if result != nil && !result.Success {
-			trace.Metadata["error"] = result.Error
-		}
-
-		errorType := categorizeError(trace.Metadata["error"])
-		trace.Metadata["error_type"] = errorType
-		trace.Metadata["prevention"] = generatePrevention(action.Tool, errorType)
-	}
-
-	// Add trace to session
-	session.AddTrace(trace)
-	log.Printf("[REACT TRACE] %s", trace.String())
-
-	// Build tool result block for Claude
-	var toolResult anthropic.ContentBlockParamUnion
-	if toolErr != nil {
-		log.Printf("[CONFIRMATION] Tool execution error, will send to Claude: %v", toolErr)
-		toolResult = anthropic.NewToolResultBlock(action.BlockID, toolErr.Error(), true)
-	} else if result != nil && !result.Success {
-		log.Printf("[CONFIRMATION] Tool execution failed, will send to Claude: %s", result.Error)
-		toolResult = anthropic.NewToolResultBlock(action.BlockID, result.Error, true)
-	} else {
-		log.Printf("[CONFIRMATION] Tool execution succeeded, sending result to Claude")
-		resultBytes, _ := json.Marshal(result.Data)
-		toolResult = anthropic.NewToolResultBlock(action.BlockID, string(resultBytes), false)
-	}
-
-	// Add tool result to session (the tool_use block is already in history from RestoreHistory)
-	session.AddToolResults([]anthropic.ContentBlockParamUnion{toolResult})
-	log.Printf("[CONFIRMATION] Calling Claude API to get contextual response...")
-
-	// Continue the loop - call Claude with the result
-	// Claude will see the tool result and generate a response
-	model := input.Model
-	if model == "" {
-		model = "claude-sonnet-4-20250514"
-	}
-	maxTokens := input.MaxTokens
-	if maxTokens == 0 {
-		maxTokens = 4096
-	}
-
-	systemPrompt := input.SystemPrompt
-	if systemPrompt == "" {
-		systemPrompt = DefaultSystemPrompt
-	}
-
-	params := anthropic.MessageNewParams{
-		Model:     anthropic.Model(model),
-		MaxTokens: maxTokens,
-		Messages:  session.Messages(),
-		System: []anthropic.TextBlockParam{
-			{Text: systemPrompt},
-		},
-	}
-
-	resp, err := e.client.Messages.New(ctx, params)
-	if err != nil {
-		log.Printf("[CONFIRMATION] Claude API error: %v", err)
-		return nil, fmt.Errorf("claude api error after confirmation: %w", err)
-	}
-
-	log.Printf("[CONFIRMATION] Claude responded successfully")
-
-	// Extract text response
-	var textResponse string
-	for _, block := range resp.Content {
-		if block.Type == "text" {
-			textResponse += block.Text
-		}
-	}
-
-	log.Printf("[CONFIRMATION] Claude's response: %s", textResponse)
-
-	session.AddAssistantResponse(resp)
-
-	// Build response blocks for persistence
-	responseBlocks := responseToBlocks(resp)
-
-	// Build tool execution record
-	var toolInput interface{}
-	json.Unmarshal(action.Input, &toolInput)
-	execution := core.ToolExecution{
-		Tool:       action.Tool,
-		Input:      toolInput,
-		DurationMs: durationMs,
-	}
-	if toolErr != nil {
-		execution.Error = toolErr.Error()
-	} else if result != nil {
-		if !result.Success {
-			execution.Error = result.Error
-		} else {
-			execution.Result = result.Data
-		}
-	}
-
-	// === PHASE 5: RECORD TRACES ===
-	if e.memory != nil && len(session.Traces) > 0 && input.Context != nil {
-		log.Printf("[MEMORY] Recording %d traces from confirmed action", len(session.Traces))
-
-		// Manager decides what to store and how
-		traces := session.Traces
-		userID := input.Context.UserID
-
-		// Record traces (implementor can make async if desired)
-		if err := e.memory.RecordTraces(ctx, userID, traces); err != nil {
-			log.Printf("[MEMORY] Failed to record traces: %v", err)
-		}
-	}
-
-	// === PHASE 5b: RECORD CONVERSATION ===
-	if e.memory != nil && input.Context != nil && textResponse != "" {
-		if err := e.memory.RecordConversation(ctx, input.Context.UserID, "", textResponse); err != nil {
-			log.Printf("[MEMORY] Failed to record conversation: %v", err)
-		}
-	}
-
-	return &Output{
-		Type:           OutputComplete,
-		Text:           textResponse,
-		ToolsUsed:      []core.ToolExecution{execution},
-		ResponseBlocks: responseBlocks,
-	}, nil
 }
 
 // createMessageStreaming handles streaming API calls.
@@ -816,6 +831,25 @@ func responseToBlocks(resp *anthropic.Message) []core.ContentBlock {
 		case "tool_use":
 			inputBytes, _ := json.Marshal(block.Input)
 			blocks = append(blocks, core.NewToolUseBlock(block.ID, block.Name, inputBytes))
+		}
+	}
+	return blocks
+}
+
+// filterBlocksForConfirmation returns only text blocks and the single tool_use
+// block that requires confirmation. Other tool_use blocks are dropped to prevent
+// "tool_use without tool_result" errors when the history is restored later.
+func filterBlocksForConfirmation(resp *anthropic.Message, confirmedBlockID string) []core.ContentBlock {
+	var blocks []core.ContentBlock
+	for _, block := range resp.Content {
+		switch block.Type {
+		case "text":
+			blocks = append(blocks, core.NewTextBlock(block.Text))
+		case "tool_use":
+			if block.ID == confirmedBlockID {
+				inputBytes, _ := json.Marshal(block.Input)
+				blocks = append(blocks, core.NewToolUseBlock(block.ID, block.Name, inputBytes))
+			}
 		}
 	}
 	return blocks
