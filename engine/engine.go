@@ -322,14 +322,15 @@ func (e *Engine) RunConfirmedAction(ctx context.Context, input *Input, action *c
 	trace.Metadata["confirmation_id"] = action.ID
 
 	// PHASE 3: ACT - Execute the confirmed tool
-	// Note: Pass empty confirmationID since confirmation was already handled locally.
-	// The HTTPExecutor will call ExecuteWrite() directly instead of trying to
-	// confirm via the remote API (which doesn't know about our local confirmations).
+	// Pass the action ID as ConfirmationID so the executor's Confirm path
+	// retrieves the cached confirmed action and actually executes the operation.
+	// The confirmation store caches confirmed actions for 60s to support this
+	// double-call pattern (server.Confirm → executor.Confirm).
 	startTime := time.Now()
 	result, toolErr := tool.Execute(ctx, &core.ToolParams{
 		UserID:         action.UserID,
 		Input:          action.Input,
-		ConfirmationID: "", // Empty string = already confirmed, execute directly
+		ConfirmationID: action.ID,
 		RequestID:      session.ID,
 	})
 
