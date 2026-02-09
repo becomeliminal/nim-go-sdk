@@ -69,8 +69,8 @@ func TestSimpleManager_RecordAndRetrieve(t *testing.T) {
 		},
 	}
 
-	// Record traces
-	err = manager.RecordTraces(ctx, "user123", traces)
+	// Record interaction
+	err = manager.Record(ctx, "user123", &memory.Interaction{Traces: traces})
 	if err != nil {
 		t.Fatalf("Failed to record traces: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestSimpleManager_UserNamespacing(t *testing.T) {
 		Success:     true,
 		Metadata:    map[string]string{"confirmed": "true"},
 	}}
-	err = manager.RecordTraces(ctx, "user1", traces1)
+	err = manager.Record(ctx, "user1", &memory.Interaction{Traces: traces1})
 	if err != nil {
 		t.Fatalf("Failed to record user1 traces: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestSimpleManager_UserNamespacing(t *testing.T) {
 		Success:     true,
 		Metadata:    map[string]string{"confirmed": "true"},
 	}}
-	err = manager.RecordTraces(ctx, "user2", traces2)
+	err = manager.Record(ctx, "user2", &memory.Interaction{Traces: traces2})
 	if err != nil {
 		t.Fatalf("Failed to record user2 traces: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestSimpleManager_FilterStorableTraces(t *testing.T) {
 		Success:     true,
 	}}
 
-	err = manager.RecordTraces(ctx, "user1", trivialTraces)
+	err = manager.Record(ctx, "user1", &memory.Interaction{Traces: trivialTraces})
 	if err != nil {
 		t.Fatalf("Failed to record traces: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestSimpleManager_FilterStorableTraces(t *testing.T) {
 		},
 	}
 
-	err = manager.RecordTraces(ctx, "user2", multiStepTraces)
+	err = manager.Record(ctx, "user2", &memory.Interaction{Traces: multiStepTraces})
 	if err != nil {
 		t.Fatalf("Failed to record traces: %v", err)
 	}
@@ -262,9 +262,9 @@ func TestSimpleManager_DisabledConfig(t *testing.T) {
 		Success:     true,
 	}}
 
-	err = manager.RecordTraces(ctx, "user1", traces)
+	err = manager.Record(ctx, "user1", &memory.Interaction{Traces: traces})
 	if err != nil {
-		t.Fatalf("RecordTraces should not error when disabled: %v", err)
+		t.Fatalf("Record should not error when disabled: %v", err)
 	}
 
 	// Try to retrieve
@@ -302,7 +302,7 @@ func TestSimpleManager_FailureStorage(t *testing.T) {
 		Success:     false,
 	}}
 
-	err = manager.RecordTraces(ctx, "user1", failureTrace)
+	err = manager.Record(ctx, "user1", &memory.Interaction{Traces: failureTrace})
 	if err != nil {
 		t.Fatalf("Failed to record traces: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestSimpleManager_ConfirmationStorage(t *testing.T) {
 		Metadata:    map[string]string{"confirmed": "true"},
 	}}
 
-	err = manager.RecordTraces(ctx, "user1", confirmationTrace)
+	err = manager.Record(ctx, "user1", &memory.Interaction{Traces: confirmationTrace})
 	if err != nil {
 		t.Fatalf("Failed to record traces: %v", err)
 	}

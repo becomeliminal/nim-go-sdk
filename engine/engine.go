@@ -754,22 +754,15 @@ Please explain:
 				e.guardrails.RecordSuccess(ctx, input.Context.UserID)
 			}
 
-			// === PHASE 5: RECORD TRACES ===
-			if e.memory != nil && len(session.Traces) > 0 && input.Context != nil {
-				log.Printf("[MEMORY] Recording %d traces", len(session.Traces))
-
-				traces := session.Traces
-				userID := input.Context.UserID
-
-				if err := e.memory.RecordTraces(ctx, userID, traces); err != nil {
-					log.Printf("[MEMORY] Failed to record traces: %v", err)
+			// === PHASE 5: RECORD INTERACTION ===
+			if e.memory != nil && input.Context != nil {
+				interaction := &memory.Interaction{
+					UserMessage:       input.UserMessage,
+					AssistantResponse: textResponse,
+					Traces:            session.Traces,
 				}
-			}
-
-			// === PHASE 5b: RECORD CONVERSATION ===
-			if e.memory != nil && input.Context != nil && input.UserMessage != "" && textResponse != "" {
-				if err := e.memory.RecordConversation(ctx, input.Context.UserID, input.UserMessage, textResponse); err != nil {
-					log.Printf("[MEMORY] Failed to record conversation: %v", err)
+				if err := e.memory.Record(ctx, input.Context.UserID, interaction); err != nil {
+					log.Printf("[MEMORY] Failed to record interaction: %v", err)
 				}
 			}
 

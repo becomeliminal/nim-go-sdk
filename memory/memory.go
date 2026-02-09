@@ -52,19 +52,27 @@ type FormatContext struct {
 	MaxLength int    // Max characters for this memory's output
 }
 
+// Interaction represents a complete user-agent interaction: the user's message,
+// the agent's response, and any ReAct traces from tool use. Passed to Manager.Record
+// so implementations have full context in a single call.
+type Interaction struct {
+	UserMessage       string
+	AssistantResponse string
+	Traces            []*core.Trace
+}
+
 // Manager orchestrates memory operations.
 // This is the main interface that Engine uses.
 //
 // The Engine is opinionated about WHEN to use memory (PHASE 0 retrieve, PHASE 5 record).
 // The Manager is unopinionated about HOW - implementations decide:
-//   - Which memories to retrieve
-//   - How to format them
-//   - Which traces to store
-//   - How to process them
+//   - Which memories to retrieve and how to format them
+//   - Which traces/conversations to store and how to process them
+//   - Whether to extract facts, build graphs, or just store raw data
 //
 // Implementations:
 //   - SimpleManager: Basic manager for local SDK
-//   - Mem0Manager: Advanced manager with fact extraction, contradiction resolution (user-implemented)
+//   - Mem0Manager: Advanced manager with fact extraction, knowledge graph (user-implemented)
 type Manager interface {
 	// Retrieve finds relevant memories for the user's message and returns formatted string.
 	// The Manager decides:
@@ -75,25 +83,20 @@ type Manager interface {
 	// Returns a formatted string ready for prompt injection.
 	Retrieve(ctx context.Context, userID string, userMessage string) (string, error)
 
-	// RecordTraces stores ReAct traces as memories.
+	// Record stores a complete interaction as memory.
+	// Called once after each agent response with full context: the user's message,
+	// the agent's response, and all ReAct traces from tool use.
+	//
 	// The Manager decides:
 	//   - Which traces are worth storing (filtering)
-	//   - How to process them (importance scoring, fact extraction, etc.)
-	//   - What format to store them in
+	//   - Whether to store the conversation separately
+	//   - How to process the interaction (fact extraction, importance scoring, etc.)
+	//   - What format to store everything in
 	//
-	// This is called asynchronously after the ReAct loop completes.
-	RecordTraces(ctx context.Context, userID string, traces []*core.Trace) error
-
-	// RecordConversation stores a conversational exchange as a memory.
-	// Called after every successful agent response with the user's message
-	// and the assistant's text response. Captures context from exchanges
-	// that may not involve tool calls (e.g., "Faiz is my friend").
-	//
-	// The Manager decides:
-	//   - Whether the exchange is worth storing (filtering trivial messages)
-	//   - How to process it (fact extraction, importance scoring)
-	//   - What format to store it in
-	RecordConversation(ctx context.Context, userID string, userMessage string, assistantResponse string) error
+	// Having traces and conversation in one call lets implementations do entity
+	// resolution across both sources (e.g., matching "faiz" in user text to
+	// "Faiz Abbas" from a search_users tool observation).
+	Record(ctx context.Context, userID string, interaction *Interaction) error
 }
 
 // Store is the vector storage backend interface.

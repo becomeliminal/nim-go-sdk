@@ -70,20 +70,22 @@ func (m *SimpleManager) Retrieve(ctx context.Context, userID string, userMessage
 	return m.formatMemories(memories, userID, userMessage), nil
 }
 
-// RecordTraces stores ReAct traces as memories.
-func (m *SimpleManager) RecordTraces(ctx context.Context, userID string, traces []*core.Trace) error {
+// Record stores a complete interaction as memory.
+// SimpleManager stores filtered traces only; conversation storage is a no-op.
+// Custom implementations (e.g., Mem0Manager) can store conversations and extract facts.
+func (m *SimpleManager) Record(ctx context.Context, userID string, interaction *Interaction) error {
 	if !m.config.Enabled {
 		return nil // Memory disabled
 	}
 
 	// Filter traces worth storing
-	storableTraces := m.filterStorableTraces(traces)
+	storableTraces := m.filterStorableTraces(interaction.Traces)
 	if len(storableTraces) == 0 {
 		log.Printf("[MEMORY] No traces worth storing (filtered out)")
 		return nil
 	}
 
-	log.Printf("[MEMORY] Recording %d traces (filtered from %d)", len(storableTraces), len(traces))
+	log.Printf("[MEMORY] Recording %d traces (filtered from %d)", len(storableTraces), len(interaction.Traces))
 
 	// Convert traces to memories and embed them
 	for i, trace := range storableTraces {
@@ -110,12 +112,6 @@ func (m *SimpleManager) RecordTraces(ctx context.Context, userID string, traces 
 		log.Printf("[MEMORY]   Stored trace #%d: action=%s", i+1, trace.Action)
 	}
 
-	return nil
-}
-
-// RecordConversation is a no-op for SimpleManager.
-// Custom implementations (e.g., Mem0Manager) can store conversations and extract facts.
-func (m *SimpleManager) RecordConversation(ctx context.Context, userID string, userMessage string, assistantResponse string) error {
 	return nil
 }
 
