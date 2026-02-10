@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	"net/url"
 	"sync"
 	"time"
 
@@ -162,13 +162,13 @@ func (e *HTTPExecutor) doRequest(ctx context.Context, method, endpoint string, b
 
 				fmt.Printf("[HTTP] GET request params: %+v\n", params)
 
-				query := make([]string, 0, len(params))
+				queryValues := url.Values{}
 				for k, v := range params {
-					query = append(query, fmt.Sprintf("%s=%v", k, v))
+					queryValues.Set(k, fmt.Sprintf("%v", v))
 				}
-				if len(query) > 0 {
-					urlStr += "?" + strings.Join(query, "&")
-					fmt.Printf("[HTTP] Query string: %s\n", strings.Join(query, "&"))
+				if len(queryValues) > 0 {
+					urlStr += "?" + queryValues.Encode()
+					fmt.Printf("[HTTP] Query string: %s\n", queryValues.Encode())
 				} else {
 					fmt.Printf("[HTTP] No query parameters\n")
 				}
@@ -209,6 +209,8 @@ func (e *HTTPExecutor) doRequest(ctx context.Context, method, endpoint string, b
 		fmt.Printf("[HTTP] Request body: %s\n", string(bodyBytes))
 		bodyReader = bytes.NewReader(bodyBytes)
 	}
+
+	fmt.Printf("[HTTP] Final URL: %s %s\n", method, urlStr)
 
 	req, err := http.NewRequestWithContext(ctx, method, urlStr, bodyReader)
 	if err != nil {

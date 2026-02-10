@@ -1,37 +1,7 @@
-# Environment variables
-.env
-.env.local
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
 
-# Go build artifacts
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# Binary
 hackathon-starter
-main
-
-# Go test cache
-*.test
-*.out
-
-# Go workspace
-go.work
-go.work.sum
-
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
-
-# Editor directories
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS files
-.DS_Store
-Thumbs.db
-.env
