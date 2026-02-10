@@ -1,6 +1,6 @@
 # 💜 Liminal Vibe Banking Hackathon Starter
 
-**Build AI-powered financial tools with real stablecoin banking APIs in minutes.**
+**Build AI-powered financial tools with real banking APIs in minutes.**
 
 This starter project gives you everything you need to create intelligent financial agents powered by Claude AI and Liminal's banking platform. No complex setup, no mock data — just real banking tools and a beautiful chat interface.
 
@@ -77,7 +77,7 @@ You should see:
 In a new terminal:
 
 ```bash
-cd frontend
+cd nim-go-sdk/examples/frontend
 
 # Install dependencies
 npm install

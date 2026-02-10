@@ -617,8 +617,7 @@ func main() {
 #### Read Operations (No Confirmation)
 
 **`get_balance`** - Retrieve current wallet balance
-- Returns: USD (USDC), EUR (EURC), and LIL token balances
-- Networks: Arbitrum and Base
+- Returns: USD, EUR, and other supported currency balances
 
 **`get_savings_balance`** - Get savings/vault positions
 - Returns: All active savings deposits with amounts and APY
@@ -642,7 +641,6 @@ func main() {
 **`send_money`** - Send payment to another user
 - Parameters: `recipient` (username or user ID), `amount`, `currency`
 - Confirmation: "Send {amount} {currency} to {recipient}"
-- Networks: Both Arbitrum and Base supported
 
 **`deposit_savings`** - Deposit funds into savings vault
 - Parameters: `amount`, `currency`, `vault_id`
@@ -655,9 +653,8 @@ func main() {
 ### Multi-Currency Support
 
 All monetary operations support:
-- **USD** (USDC stablecoin)
-- **EUR** (EURC stablecoin)
-- **LIL** (Liminal platform token)
+- **USD** (US Dollars)
+- **EUR** (Euros)
 
 ### Example Conversation Flow
 

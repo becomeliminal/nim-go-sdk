@@ -11,9 +11,9 @@ func LiminalToolDefinitions() []core.ToolDefinition {
 		// Read operations (thought optional)
 		{
 			ToolName:        "get_balance",
-			ToolDescription: "Get the user's wallet balance across all supported currencies and blockchains. Returns balances for USDC (USD equivalent on Arbitrum), EURC (EUR equivalent on Base), LIL (native token on Base), and any other tokens. When users mention 'USD' or 'dollars', use 'USDC'. When users mention 'EUR' or 'euros', use 'EURC'.",
+			ToolDescription: "Get the user's wallet balance across all supported currencies. Returns balances in USDC (dollars) and EURC (euros). When users say 'USD' or 'dollars', use 'USDC'. When users say 'EUR' or 'euros', use 'EURC'.",
 			InputSchema: BuildSchemaWithThought(map[string]interface{}{
-				"currency": StringProperty("Optional: filter by currency token (e.g., 'USDC' for USD, 'EURC' for EUR, 'LIL' for LIL)"),
+				"currency": StringProperty("Optional: filter by currency (e.g., 'USDC' for dollars, 'EURC' for euros)"),
 			}, false),
 		},
 		{
@@ -52,24 +52,24 @@ func LiminalToolDefinitions() []core.ToolDefinition {
 		// Write operations (thought required)
 		{
 			ToolName:                 "send_money",
-			ToolDescription:          "Send money to another user. When users say 'USD' or 'dollars', use 'USDC'. When users say 'EUR' or 'euros', use 'EURC'. USDC is sent on Arbitrum, EURC on Base, LIL is the native token on Base. The blockchain is automatically selected based on the currency. Requires confirmation.",
+			ToolDescription:          "Send money to another user. When users say 'USD' or 'dollars', use 'USDC'. When users say 'EUR' or 'euros', use 'EURC'. Requires confirmation.",
 			RequiresUserConfirmation: true,
 			SummaryTemplate:          "Send {{.amount}} {{.currency}} to {{.recipient}}",
 			InputSchema: BuildSchemaWithThought(map[string]interface{}{
 				"recipient": StringProperty("Recipient's display tag (e.g., @alice) or user ID"),
 				"amount":    StringProperty("Amount to send (e.g., '50.00')"),
-				"currency":  StringProperty("Currency token to send. Use 'USDC' for USD/dollars, 'EURC' for EUR/euros, 'LIL' for LIL"),
+				"currency":  StringProperty("Currency to send. Use 'USDC' for dollars, 'EURC' for euros"),
 				"note":      StringProperty("Optional payment note"),
 			}, true, "recipient", "amount", "currency"),
 		},
 		{
 			ToolName:                 "deposit_savings",
-			ToolDescription:          "Deposit funds into savings to earn yield. When users say 'USD' or 'dollars', use 'USDC'. When users say 'EUR' or 'euros', use 'EURC'. Funds are deposited into high-yield vaults. Requires confirmation.",
+			ToolDescription:          "Deposit funds into savings to earn yield. When users say 'USD' or 'dollars', use 'USDC'. When users say 'EUR' or 'euros', use 'EURC'. Requires confirmation.",
 			RequiresUserConfirmation: true,
 			SummaryTemplate:          "Deposit {{.amount}} {{.currency}} into savings",
 			InputSchema: BuildSchemaWithThought(map[string]interface{}{
 				"amount":   StringProperty("Amount to deposit"),
-				"currency": StringProperty("Currency token to deposit. Use 'USDC' for USD/dollars, 'EURC' for EUR/euros"),
+				"currency": StringProperty("Currency to deposit. Use 'USDC' for dollars, 'EURC' for euros"),
 			}, true, "amount", "currency"),
 		},
 		{
@@ -79,7 +79,7 @@ func LiminalToolDefinitions() []core.ToolDefinition {
 			SummaryTemplate:          "Withdraw {{.amount}} {{.currency}} from savings",
 			InputSchema: BuildSchemaWithThought(map[string]interface{}{
 				"amount":   StringProperty("Amount to withdraw"),
-				"currency": StringProperty("Currency token to withdraw. Use 'USDC' for USD/dollars, 'EURC' for EUR/euros"),
+				"currency": StringProperty("Currency to withdraw. Use 'USDC' for dollars, 'EURC' for euros"),
 			}, true, "amount", "currency"),
 		},
 		{

@@ -121,7 +121,7 @@ func main() {
 	log.Printf("📡 WebSocket endpoint: ws://localhost:%s/ws", port)
 	log.Printf("💚 Health check: http://localhost:%s/health", port)
 	log.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	log.Println("Ready for connections! Start your frontend with: cd frontend && npm run dev")
+	log.Println("Ready for connections! Start your frontend with: cd ../frontend && npm run dev")
 	log.Println()
 
 	if err := srv.Run(":" + port); err != nil {
@@ -138,7 +138,7 @@ func main() {
 const hackathonSystemPrompt = `You are Nim, a friendly AI financial assistant built for the Liminal Vibe Banking Hackathon.
 
 WHAT YOU DO:
-You help users manage their money using Liminal's stablecoin banking platform. You can check balances, review transactions, send money, and manage savings - all through natural conversation.
+You help users manage their money using Liminal's banking platform. You can check balances, review transactions, send money, and manage savings - all through natural conversation.
 
 CONVERSATIONAL STYLE:
 - Be warm, friendly, and conversational - not robotic
@@ -146,6 +146,9 @@ CONVERSATIONAL STYLE:
 - Ask clarifying questions when something is unclear
 - Remember context from earlier in the conversation
 - Explain things simply without being condescending
+- Use everyday financial language: "$50.00" not "50 USDC", "euros" not "EURC"
+- Never mention blockchain names, chain IDs, or crypto jargon unless the user asks
+- You are a financial co-pilot, not a crypto assistant
 
 WHEN TO USE TOOLS:
 - Use tools immediately for simple queries ("what's my balance?")
