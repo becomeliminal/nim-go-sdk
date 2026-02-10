@@ -9,10 +9,17 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/becomeliminal/nim-go-sdk/core"
 )
+
+// pendingWrite stores the details of a write operation awaiting confirmation.
+type pendingWrite struct {
+	req       *core.ExecuteRequest
+	createdAt time.Time
+}
 
 // HTTPExecutor implements ToolExecutor by calling the agent_gateway over HTTP.
 // This is the public implementation used by external developers.
@@ -20,6 +27,10 @@ type HTTPExecutor struct {
 	baseURL    string
 	jwtToken   string  // JWT for Bearer authentication
 	httpClient *http.Client
+
+	// pending stores write operations awaiting confirmation, keyed by confirmation ID.
+	pending   map[string]*pendingWrite
+	pendingMu sync.Mutex
 }
 
 // HTTPExecutorConfig configures the HTTP executor.
@@ -47,6 +58,7 @@ func NewHTTPExecutor(cfg HTTPExecutorConfig) *HTTPExecutor {
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
+		pending: make(map[string]*pendingWrite),
 	}
 }
 
@@ -57,26 +69,56 @@ func (e *HTTPExecutor) Execute(ctx context.Context, req *core.ExecuteRequest) (*
 	return e.doRequest(ctx, "GET", endpoint, req, req.Tool)
 }
 
-// ExecuteWrite runs a write tool that may require confirmation.
+// ExecuteWrite runs a write tool via HTTP POST.
 func (e *HTTPExecutor) ExecuteWrite(ctx context.Context, req *core.ExecuteRequest) (*core.ExecuteResponse, error) {
 	fmt.Printf("[HTTP] ExecuteWrite called for tool: %s, user: %s\n", req.Tool, req.UserID)
 	endpoint := e.endpointForTool(req.Tool)
 	return e.doRequest(ctx, "POST", endpoint, req, req.Tool)
 }
 
-// Confirm executes a previously confirmed write operation.
-func (e *HTTPExecutor) Confirm(ctx context.Context, userID, confirmationID string) (*core.ExecuteResponse, error) {
-	fmt.Printf("[HTTP] Confirm called for confirmationID: %s, user: %s\n", confirmationID, userID)
-	endpoint := fmt.Sprintf("/nim/v1/agent/confirmations/%s/confirm", confirmationID)
-	return e.doRequest(ctx, "POST", endpoint, nil, "")
+// StorePending caches a write request so it can be executed later via Confirm.
+// Called by ExecutorTool before the confirmation flow.
+func (e *HTTPExecutor) StorePending(confirmationID string, req *core.ExecuteRequest) {
+	e.pendingMu.Lock()
+	e.pending[confirmationID] = &pendingWrite{req: req, createdAt: time.Now()}
+	e.pendingMu.Unlock()
+	fmt.Printf("[HTTP] Stored pending write: id=%s, tool=%s\n", confirmationID, req.Tool)
 }
 
-// Cancel cancels a pending confirmation.
+// Confirm executes a previously confirmed write operation by POSTing to the actual API endpoint.
+func (e *HTTPExecutor) Confirm(ctx context.Context, userID, confirmationID string) (*core.ExecuteResponse, error) {
+	fmt.Printf("[HTTP] Confirm called for confirmationID: %s, user: %s\n", confirmationID, userID)
+
+	// Look up the cached write request
+	e.pendingMu.Lock()
+	pw, ok := e.pending[confirmationID]
+	if ok {
+		delete(e.pending, confirmationID)
+	}
+	e.pendingMu.Unlock()
+
+	if !ok {
+		return &core.ExecuteResponse{
+			Success: false,
+			Error:   fmt.Sprintf("confirmation %s not found or expired", confirmationID),
+		}, nil
+	}
+
+	// Execute the actual write operation
+	fmt.Printf("[HTTP] Executing confirmed write: tool=%s\n", pw.req.Tool)
+	endpoint := e.endpointForTool(pw.req.Tool)
+	return e.doRequest(ctx, "POST", endpoint, pw.req, pw.req.Tool)
+}
+
+// Cancel removes a pending confirmation.
 func (e *HTTPExecutor) Cancel(ctx context.Context, userID, confirmationID string) error {
 	fmt.Printf("[HTTP] Cancel called for confirmationID: %s, user: %s\n", confirmationID, userID)
-	endpoint := fmt.Sprintf("/nim/v1/agent/confirmations/%s/cancel", confirmationID)
-	_, err := e.doRequest(ctx, "POST", endpoint, nil, "")
-	return err
+
+	e.pendingMu.Lock()
+	delete(e.pending, confirmationID)
+	e.pendingMu.Unlock()
+
+	return nil
 }
 
 // endpointForTool maps tool names to HTTP endpoints.

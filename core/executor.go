@@ -26,6 +26,14 @@ type ToolExecutor interface {
 	Cancel(ctx context.Context, userID, confirmationID string) error
 }
 
+// PendingStore is an optional interface for executors that need to cache write
+// requests locally. The HTTPExecutor implements this because it needs the tool
+// name and input when Confirm() is called (which only receives a confirmation ID).
+// The GRPCExecutor does not need this because it uses Redis for the same purpose.
+type PendingStore interface {
+	StorePending(confirmationID string, req *ExecuteRequest)
+}
+
 // ExecuteRequest contains the parameters for tool execution.
 type ExecuteRequest struct {
 	// UserID is the authenticated user making the request.
@@ -119,7 +127,12 @@ func (t *ExecutorTool) Execute(ctx context.Context, params *ToolParams) (*ToolRe
 	var err error
 
 	if t.definition.RequiresUserConfirmation && params.ConfirmationID != "" {
-		// This is a confirmed write operation
+		// This is a confirmed write operation.
+		// If the executor supports pending storage (e.g., HTTPExecutor), store the
+		// request first so Confirm() can retrieve the tool name and input.
+		if ps, ok := t.executor.(PendingStore); ok {
+			ps.StorePending(params.ConfirmationID, req)
+		}
 		resp, err = t.executor.Confirm(ctx, params.UserID, params.ConfirmationID)
 	} else if t.definition.RequiresUserConfirmation {
 		// This is a write operation that needs confirmation
