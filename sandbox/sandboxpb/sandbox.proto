@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package nim.sandbox.v1;
+
+option go_package = "github.com/becomeliminal/nim-go-sdk/sandbox/sandboxpb";
+
+// SandboxService runs inside a per-user gVisor-isolated pod.
+// It receives shell commands from the nim agent and executes them
+// in the sandboxed environment. Internal gRPC only.
+service SandboxService {
+  // Exec runs a CLI command and streams output back in real time.
+  rpc Exec(ExecRequest) returns (stream ExecResponse);
+
+  // Health reports readiness and active process count.
+  // Used by SandboxManager for pod health checks.
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message ExecRequest {
+  string command = 1;
+  map<string, string> env = 2;
+  int32 timeout_seconds = 3;
+}
+
+message ExecResponse {
+  bytes stdout = 1;
+  bytes stderr = 2;
+  bool done = 3;
+  int32 exit_code = 4;
+  // True when output exceeded the 100KB cap (first 50KB + last 50KB kept).
+  bool truncated = 5;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool ready = 1;
+  int32 active_processes = 2;
+  int32 max_processes = 3;
+}
