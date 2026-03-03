@@ -68,8 +68,12 @@ func (m *MemoryConversations) Append(ctx context.Context, msg *AppendMessage) er
 		return fmt.Errorf("conversation not found: %s", msg.ConversationID)
 	}
 
+	msgID := msg.ID
+	if msgID == "" {
+		msgID = uuid.New().String()
+	}
 	stored := StoredMessage{
-		ID:        uuid.New().String(),
+		ID:        msgID,
 		Role:      msg.Role,
 		Content:   msg.Content,
 		Blocks:    msg.Blocks,

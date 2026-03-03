@@ -217,11 +217,14 @@ func (e *Engine) Run(ctx context.Context, input *Input) (*Output, error) {
 	// Create session
 	userID := ""
 	conversationID := ""
+	messageID := ""
 	if input.Context != nil {
 		userID = input.Context.UserID
 		conversationID = input.Context.ConversationID
+		messageID = input.Context.MessageID
 	}
 	session := NewSession(userID, conversationID)
+	session.MessageID = messageID
 
 	// Restore history
 	session.RestoreHistory(input.History)
@@ -278,6 +281,7 @@ func (e *Engine) ExecuteTool(ctx context.Context, userID, toolName string, input
 		Input:          input,
 		ConfirmationID: confirmationID,
 		RequestID:      confirmationID,
+		// Note: ConversationID and MessageID not available in standalone ExecuteTool.
 	})
 }
 
@@ -289,11 +293,14 @@ func (e *Engine) RunConfirmedAction(ctx context.Context, input *Input, action *c
 	// Create session from input
 	userID := ""
 	conversationID := ""
+	messageID := ""
 	if input.Context != nil {
 		userID = input.Context.UserID
 		conversationID = input.Context.ConversationID
+		messageID = input.Context.MessageID
 	}
 	session := NewSession(userID, conversationID)
+	session.MessageID = messageID
 
 	// Restore history - this includes the original tool_use block
 	session.RestoreHistory(input.History)
@@ -332,6 +339,8 @@ func (e *Engine) RunConfirmedAction(ctx context.Context, input *Input, action *c
 		Input:          action.Input,
 		ConfirmationID: action.ID,
 		RequestID:      session.ID,
+		ConversationID: session.ConversationID,
+		MessageID:      session.MessageID,
 	})
 
 	durationMs := time.Since(startTime).Milliseconds()
@@ -633,9 +642,11 @@ Please explain:
 				// PHASE 3: ACT - Execute read-only tool
 				startTime := time.Now()
 				result, err := tool.Execute(ctx, &core.ToolParams{
-					UserID:    session.UserID,
-					Input:     inputBytes,
-					RequestID: session.ID,
+					UserID:         session.UserID,
+					Input:          inputBytes,
+					RequestID:      session.ID,
+					ConversationID: session.ConversationID,
+					MessageID:      session.MessageID,
 				})
 
 				durationMs := time.Since(startTime).Milliseconds()

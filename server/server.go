@@ -11,6 +11,7 @@ import (
 
 	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
 	"github.com/becomeliminal/nim-go-sdk/core"
@@ -364,15 +365,19 @@ func (s *Server) handleMessage(ctx context.Context, conn *websocket.Conn, sess *
 
 	log.Printf("[CONVERSATION %s] USER: %s", sess.ConversationID, truncate(content, 50))
 
+	// Pre-generate message ID so tools can reference it
+	messageID := uuid.New().String()
+
 	// Add to history
 	sess.History = append(sess.History, core.NewUserMessage(content))
 	sess.TurnCount++
 
-	// Persist user message
-	s.persistMessage(ctx, sess.ConversationID, "user", content)
+	// Persist user message with known ID
+	s.persistMessageWithID(ctx, sess.ConversationID, "user", content, messageID)
 
 	// Build input
 	agentCtx := core.NewContext(sess.UserID, sess.ID, sess.ConversationID, sess.ID)
+	agentCtx.MessageID = messageID
 
 	input := &engine.Input{
 		UserMessage:  content,
@@ -568,7 +573,12 @@ func (s *Server) handleCancel(ctx context.Context, conn *websocket.Conn, sess *s
 }
 
 func (s *Server) persistMessage(ctx context.Context, conversationID string, role, content string) {
+	s.persistMessageWithID(ctx, conversationID, role, content, "")
+}
+
+func (s *Server) persistMessageWithID(ctx context.Context, conversationID string, role, content, messageID string) {
 	err := s.conversations.Append(ctx, &store.AppendMessage{
+		ID:             messageID,
 		ConversationID: conversationID,
 		Role:           role,
 		Content:        content,
