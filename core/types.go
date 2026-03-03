@@ -198,6 +198,9 @@ type Context struct {
 	// RequestID is a unique identifier for this request (for tracing).
 	RequestID string
 
+	// MessageID is the user message that triggered this agent turn.
+	MessageID string
+
 	// AuditParentID links sub-agent audit entries to their parent.
 	AuditParentID *string
 
@@ -332,6 +335,7 @@ func (c *Context) ForSubAgent(requestID string) *Context {
 		SessionID:      c.SessionID,
 		ConversationID: c.ConversationID,
 		RequestID:      requestID,
+		MessageID:      c.MessageID,
 		AuditParentID:  &parentID,
 		Preferences:    c.Preferences,
 		UserLimits:     c.UserLimits,

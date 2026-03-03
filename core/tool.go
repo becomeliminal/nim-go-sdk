@@ -41,6 +41,12 @@ type ToolParams struct {
 
 	// RequestID for tracing/logging.
 	RequestID string
+
+	// ConversationID is the conversation this tool call belongs to.
+	ConversationID string
+
+	// MessageID is the user message that triggered this agent turn.
+	MessageID string
 }
 
 // ToolResult contains the result of a tool execution.

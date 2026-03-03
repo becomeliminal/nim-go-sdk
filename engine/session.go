@@ -14,6 +14,7 @@ type Session struct {
 	ID             string
 	UserID         string
 	ConversationID string
+	MessageID      string // User message that triggered this turn
 	messages       []anthropic.MessageParam
 	TurnCount      int
 	CreatedAt      time.Time

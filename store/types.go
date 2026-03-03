@@ -29,6 +29,7 @@ type StoredMessage struct {
 
 // AppendMessage contains data for adding a message to a conversation.
 type AppendMessage struct {
+	ID             string // Optional pre-generated message UUID.
 	ConversationID string
 	Role           string
 	Content        string
