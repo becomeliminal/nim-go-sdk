@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 )
@@ -88,6 +89,56 @@ func TestBaseTool_GetSummary_InvalidJSON(t *testing.T) {
 	want := "Send {{.amount}} to {{.recipient}}"
 	if got != want {
 		t.Errorf("GetSummary() with invalid JSON = %q, want %q", got, want)
+	}
+}
+
+func TestBaseTool_Execute_PassesAllToolParams(t *testing.T) {
+	var captured *ToolParams
+
+	tool := NewBaseTool(ToolDefinition{
+		ToolName: "test_tool",
+	}, func(ctx context.Context, params *ToolParams) (*ToolResult, error) {
+		captured = params
+		return &ToolResult{Success: true}, nil
+	})
+
+	input := json.RawMessage(`{"key":"value"}`)
+	params := &ToolParams{
+		UserID:         "user-123",
+		Input:          input,
+		ConfirmationID: "conf-456",
+		RequestID:      "req-789",
+		ConversationID: "conv-aaa",
+		MessageID:      "msg-bbb",
+	}
+
+	result, err := tool.Execute(context.Background(), params)
+	if err != nil {
+		t.Fatalf("Execute() returned error: %v", err)
+	}
+	if !result.Success {
+		t.Fatal("Execute() returned unsuccessful result")
+	}
+	if captured == nil {
+		t.Fatal("handler was not called")
+	}
+	if captured.UserID != "user-123" {
+		t.Errorf("UserID = %q, want %q", captured.UserID, "user-123")
+	}
+	if captured.ConfirmationID != "conf-456" {
+		t.Errorf("ConfirmationID = %q, want %q", captured.ConfirmationID, "conf-456")
+	}
+	if captured.RequestID != "req-789" {
+		t.Errorf("RequestID = %q, want %q", captured.RequestID, "req-789")
+	}
+	if captured.ConversationID != "conv-aaa" {
+		t.Errorf("ConversationID = %q, want %q", captured.ConversationID, "conv-aaa")
+	}
+	if captured.MessageID != "msg-bbb" {
+		t.Errorf("MessageID = %q, want %q", captured.MessageID, "msg-bbb")
+	}
+	if string(captured.Input) != string(input) {
+		t.Errorf("Input = %s, want %s", captured.Input, input)
 	}
 }
 
