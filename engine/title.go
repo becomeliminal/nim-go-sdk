@@ -56,7 +56,7 @@ func (e *Engine) GenerateTitle(ctx context.Context, history []core.Message) (str
 
 	// Use a smaller model for cost efficiency
 	params := anthropic.MessageNewParams{
-		Model:     anthropic.ModelClaude3_5HaikuLatest,
+		Model:     anthropic.ModelClaudeHaiku4_5_20251001,
 		MaxTokens: 50, // Titles are short
 		Messages:  messages,
 		System: []anthropic.TextBlockParam{

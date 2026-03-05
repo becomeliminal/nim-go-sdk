@@ -35,4 +35,6 @@ type AppendMessage struct {
 	Content        string
 	Blocks         []interface{}
 	Tools          []interface{}
+	InputTokens    int
+	OutputTokens   int
 }

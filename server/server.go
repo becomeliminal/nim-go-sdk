@@ -373,7 +373,7 @@ func (s *Server) handleMessage(ctx context.Context, conn *websocket.Conn, sess *
 	sess.TurnCount++
 
 	// Persist user message with known ID
-	s.persistMessageWithID(ctx, sess.ConversationID, "user", content, messageID)
+	s.persistMessageWithID(ctx, sess.ConversationID, "user", content, messageID, 0, 0)
 
 	// Build input
 	agentCtx := core.NewContext(sess.UserID, sess.ID, sess.ConversationID, sess.ID)
@@ -431,7 +431,7 @@ func (s *Server) handleOutput(ctx context.Context, conn *websocket.Conn, sess *s
 
 		sess.History = append(sess.History, core.NewAssistantMessage(output.Text))
 
-		s.persistMessage(ctx, sess.ConversationID, "assistant", output.Text)
+		s.persistMessage(ctx, sess.ConversationID, "assistant", output.Text, output.TokensUsed.InputTokens, output.TokensUsed.OutputTokens)
 
 		s.send(conn, ServerMessage{Type: "text", Content: output.Text})
 		s.send(conn, ServerMessage{
@@ -572,16 +572,18 @@ func (s *Server) handleCancel(ctx context.Context, conn *websocket.Conn, sess *s
 	s.send(conn, ServerMessage{Type: "complete"})
 }
 
-func (s *Server) persistMessage(ctx context.Context, conversationID string, role, content string) {
-	s.persistMessageWithID(ctx, conversationID, role, content, "")
+func (s *Server) persistMessage(ctx context.Context, conversationID string, role, content string, inputTokens, outputTokens int) {
+	s.persistMessageWithID(ctx, conversationID, role, content, "", inputTokens, outputTokens)
 }
 
-func (s *Server) persistMessageWithID(ctx context.Context, conversationID string, role, content, messageID string) {
+func (s *Server) persistMessageWithID(ctx context.Context, conversationID string, role, content, messageID string, inputTokens, outputTokens int) {
 	err := s.conversations.Append(ctx, &store.AppendMessage{
 		ID:             messageID,
 		ConversationID: conversationID,
 		Role:           role,
 		Content:        content,
+		InputTokens:    inputTokens,
+		OutputTokens:   outputTokens,
 	})
 	if err != nil {
 		log.Printf("Failed to persist message: %v", err)
